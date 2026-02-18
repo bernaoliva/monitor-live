@@ -1,0 +1,42 @@
+# === CREDENCIAIS / SEGREDOS ===
+firebase-credentials.json
+*.json.key
+.env
+.env.local
+.env.*.local
+service-account*.json
+
+# === BANCO DE DADOS ===
+*.sqlite3
+
+# === MODELO DE IA (arquivos grandes) ===
+model/
+
+# === PYTHON ===
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# === NODE / NEXT.JS ===
+node_modules/
+.next/
+out/
+dashboard/.vercel/
+
+# === CLAUDE (sessão local) ===
+.claude/
+
+# === DEBUG ===
+debug_html/
+debug_logs/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === GCP ===
+.gcloudignore
