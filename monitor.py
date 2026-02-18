@@ -14,19 +14,6 @@ import functools
 import hashlib
 import signal
 import requests
-
-# Carrega .env se existir (variáveis locais — não vai pro git)
-def _load_dotenv():
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                os.environ.setdefault(key.strip(), val.strip())
-_load_dotenv()
 import multiprocessing as mp
 from multiprocessing import Process, Queue
 from threading import Thread, Lock
@@ -92,8 +79,8 @@ CHAT_HARD_WATCHDOG_SECONDS     = 45
 CHAT_DEDUP_WINDOW              = 5000
 
 # IA — Cloud Run (DistilBERT fine-tuned)
-SERVING_URL     = os.environ.get("SERVING_URL", "")
-SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "5"))
+SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
+SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
 
 # HTTP
