@@ -14,6 +14,19 @@ import functools
 import hashlib
 import signal
 import requests
+
+# Carrega .env se existir (variáveis locais — não vai pro git)
+def _load_dotenv():
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                os.environ.setdefault(key.strip(), val.strip())
+_load_dotenv()
 import multiprocessing as mp
 from multiprocessing import Process, Queue
 from threading import Thread, Lock
