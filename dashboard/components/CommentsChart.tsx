@@ -35,7 +35,7 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   )
 }
 
-export default function CommentsChart({ data }: { data: ChartPoint[] }) {
+export default function CommentsChart({ data, height = 220 }: { data: ChartPoint[]; height?: number }) {
   if (data.length === 0) {
     return (
       <div className="h-48 flex items-center justify-center text-white/20 text-sm">
@@ -48,7 +48,7 @@ export default function CommentsChart({ data }: { data: ChartPoint[] }) {
   const tickInterval = Math.max(1, Math.ceil(data.length / 8))
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
+    <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 28 }}>
         <defs>
           <linearGradient id="gradTotal" x1="0" y1="0" x2="0" y2="1">

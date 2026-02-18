@@ -62,15 +62,17 @@ const CAT_DEFAULT: CatStyleEntry = {
 export default function LiveCard({
   live,
   onDismiss,
+  compact = false,
 }: {
   live: Live
   onDismiss?: () => void
+  compact?: boolean
 }) {
   const [comments,      setComments]      = useState<Comment[]>([])
   const [allTechComments, setAllTechComments] = useState<Comment[]>([])
   const [dismissed,     setDismissed]     = useState<Set<string>>(new Set())
   const [expanded,      setExpanded]      = useState(false)
-  const [feedMinimized, setFeedMinimized] = useState(false)
+  const [feedMinimized, setFeedMinimized] = useState(compact)
 
   // Carrega dismissed do localStorage ao montar
   useEffect(() => {
@@ -312,8 +314,8 @@ export default function LiveCard({
       )}
 
       {/* Chart */}
-      <div className="px-4 pt-3 pb-1">
-        <CommentsChart data={chartData} />
+      <div className={compact ? "px-3 pt-2 pb-0" : "px-4 pt-3 pb-1"}>
+        <CommentsChart data={chartData} height={compact ? 130 : 220} />
       </div>
 
       {/* Technical comments feed */}
