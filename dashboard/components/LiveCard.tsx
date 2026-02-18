@@ -9,7 +9,7 @@ import {
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
-import { ExternalLink, AlertTriangle, ArrowRight, X, ChevronDown, ChevronUp, Minus, Plus } from "lucide-react"
+import { ExternalLink, AlertTriangle, ArrowRight, X } from "lucide-react"
 import { format } from "date-fns"
 
 function buildChartData(comments: Comment[]): ChartPoint[] {
@@ -70,9 +70,7 @@ export default function LiveCard({
 }) {
   const [comments,      setComments]      = useState<Comment[]>([])
   const [allTechComments, setAllTechComments] = useState<Comment[]>([])
-  const [dismissed,     setDismissed]     = useState<Set<string>>(new Set())
-  const [expanded,      setExpanded]      = useState(false)
-  const [feedMinimized, setFeedMinimized] = useState(compact)
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
 
   // Carrega dismissed do localStorage ao montar
   useEffect(() => {
@@ -164,9 +162,7 @@ export default function LiveCard({
     [allTechComments, dismissed]
   )
 
-  const RECENT_COUNT = 8
-  const recentComments = visibleComments.slice(0, RECENT_COUNT)
-  const olderComments  = visibleComments.slice(RECENT_COUNT)
+  const lastFiveComments = visibleComments.slice(0, 5)
 
   // Gráfico: aplica dismissed imediatamente sem esperar o Firestore
   const chartData = useMemo(() => {
@@ -284,190 +280,105 @@ export default function LiveCard({
         </div>
       </div>
 
-      {/* Problemas citados — barras de proporção */}
-      {categoryBreakdown.length > 0 && (
-        <div className="px-4 py-3 border-b border-white/[0.06] space-y-2">
-          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40">
-            Problemas citados
-          </p>
-          {categoryBreakdown.map(([cat, count]) => {
-            const style = CAT_STYLE[cat] ?? CAT_DEFAULT
-            const pct   = Math.round((count / Math.max(categoryTotal, 1)) * 100)
-            return (
-              <div key={cat} className="flex items-center gap-3">
-                <span className={`text-[9px] font-bold font-mono uppercase w-16 shrink-0 ${style.text}`}>
-                  {cat}
-                </span>
-                <div className="flex-1 h-1 bg-white/[0.06] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${pct}%`, background: style.barColor }}
-                  />
-                </div>
-                <span className={`font-data text-[11px] font-bold w-7 text-right shrink-0 ${style.text}`}>
-                  {count}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
       {/* Chart */}
-      <div className={compact ? "px-3 pt-2 pb-0" : "px-4 pt-3 pb-1"}>
-        <CommentsChart data={chartData} height={compact ? 130 : 220} />
+      <div className="px-4 pt-3 pb-1">
+        <CommentsChart data={chartData} height={220} />
       </div>
 
-      {/* Technical comments feed */}
-      <div className="border-t border-white/[0.06]">
-        <div className="px-4 py-2 flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <AlertTriangle size={10} className="text-red-400/60" />
-            <span className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/45">
-              Problemas em tempo real
-            </span>
-            <span className="font-data text-[9px] text-white/35">{visibleComments.length}</span>
-          </div>
-          {visibleComments.length > 0 && (
-            <button
-              onClick={() => setFeedMinimized((v) => !v)}
-              title={feedMinimized ? "Expandir feed" : "Minimizar feed"}
-              className="text-white/25 hover:text-white/50 transition-colors"
-            >
-              {feedMinimized ? <Plus size={12} /> : <Minus size={12} />}
-            </button>
-          )}
-        </div>
+      {/* Abaixo do gráfico: comentários (2/3) + categorias (1/3) */}
+      <div className="border-t border-white/[0.06] flex min-h-0">
 
-        {feedMinimized ? (
-          <div className="px-4 pb-2 text-[10px] text-white/25 font-mono">
-            Feed minimizado — {visibleComments.length} problema{visibleComments.length !== 1 ? "s" : ""} detectado{visibleComments.length !== 1 ? "s" : ""}
+        {/* Coluna esquerda: últimos 5 comentários técnicos */}
+        <div className="flex-[2] min-w-0 border-r border-white/[0.06]">
+          <div className="px-3 py-2 flex items-center gap-1.5 border-b border-white/[0.04]">
+            <AlertTriangle size={9} className="text-red-400/60 shrink-0" />
+            <span className="text-[8px] font-bold font-mono uppercase tracking-wider text-white/40">
+              Últimos problemas
+            </span>
+            <span className="font-data text-[9px] text-white/30 ml-auto">{visibleComments.length}</span>
           </div>
-        ) : visibleComments.length === 0 ? (
-          <div className="px-4 pb-4 text-[11px] text-white/30 font-mono">
-            Nenhum problema detectado
-          </div>
-        ) : (
-          <>
-            {/* Recent comments — expanded view */}
+          {visibleComments.length === 0 ? (
+            <div className="px-3 py-4 text-[10px] text-white/25 font-mono">
+              Nenhum problema detectado
+            </div>
+          ) : (
             <div>
-              {recentComments.map((c) => {
+              {lastFiveComments.map((c) => {
                 const catKey   = normalizeCategory(c.category) ?? ""
                 const catStyle = CAT_STYLE[catKey] ?? CAT_DEFAULT
                 return (
                   <div
                     key={c.id}
-                    className="relative flex gap-3 group py-2.5 border-b border-white/[0.04] last:border-0"
+                    className="relative group flex items-center gap-2 px-3 py-2 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
                   >
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
-                    <div className="pl-4 pr-1 flex gap-3 flex-1 min-w-0">
-                      <div className="pt-1.5 shrink-0">
-                        <span className={`block w-1.5 h-1.5 rounded-full ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                          {catKey && (
-                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold font-mono tracking-wide ${catStyle.bg} ${catStyle.border} ${catStyle.text}`}>
-                              {catKey}
-                            </span>
-                          )}
-                          {c.severity && c.severity !== "none" && (
-                            <span className={`text-[8px] font-bold px-1 py-0.5 rounded ${
-                              c.severity === "high"   ? "bg-red-500/20 text-red-300" :
-                              c.severity === "medium" ? "bg-amber-500/20 text-amber-300" :
-                                                        "bg-yellow-500/20 text-yellow-300"
-                            }`}>
-                              {c.severity.toUpperCase()}
-                            </span>
-                          )}
-                          <span className="text-[10px] font-semibold text-white/50 truncate max-w-[100px]">
-                            {c.author}
-                          </span>
-                          <span className="text-[9px] text-white/30 font-mono shrink-0">
-                            {format(new Date(c.ts), "HH:mm:ss")}
-                          </span>
-                        </div>
-                        <p className="text-[12px] text-white/80 leading-relaxed">{c.text}</p>
-                        {c.issue && (
-                          <span className="inline-block mt-0.5 text-[8px] text-white/35 font-mono">
-                            {c.issue}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                    <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
+                    {catKey && (
+                      <span className={`text-[8px] font-bold font-mono shrink-0 ${catStyle.text}`}>
+                        {catKey}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-white/65 truncate flex-1 min-w-0">
+                      {c.text}
+                    </span>
+                    <span className="text-[9px] text-white/25 font-mono shrink-0">
+                      {format(new Date(c.ts), "HH:mm")}
+                    </span>
                     <button
                       onClick={() => dismissComment(c)}
-                      title="Descartar: marcar como não-técnico"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1.5 mr-3 text-white/25 hover:text-red-400/70"
+                      title="Descartar"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70"
                     >
-                      <X size={10} />
+                      <X size={9} />
                     </button>
                   </div>
                 )
               })}
             </div>
-
-            {/* Toggle button for older comments */}
-            {olderComments.length > 0 && (
-              <button
-                onClick={() => setExpanded((v) => !v)}
-                className="w-full px-4 py-2 flex items-center justify-center gap-1.5 border-y border-white/[0.04] text-[10px] font-mono font-bold text-white/30 hover:text-white/50 hover:bg-white/[0.02] transition-all"
-              >
-                {expanded ? (
-                  <>Ocultar anteriores <ChevronUp size={10} /></>
-                ) : (
-                  <>+{olderComments.length} problema{olderComments.length > 1 ? "s" : ""} anterior{olderComments.length > 1 ? "es" : ""} <ChevronDown size={10} /></>
-                )}
-              </button>
-            )}
-
-            {/* Older comments — compact view */}
-            {expanded && olderComments.length > 0 && (
-              <div className="max-h-[400px] overflow-y-auto">
-                {olderComments.map((c) => {
-                  const catKey   = normalizeCategory(c.category) ?? ""
-                  const catStyle = CAT_STYLE[catKey] ?? CAT_DEFAULT
-                  return (
-                    <div
-                      key={c.id}
-                      className="group flex items-center gap-2 px-4 py-1.5 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
-                    >
-                      <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
-                      {catKey && (
-                        <span className={`text-[8px] font-bold font-mono shrink-0 ${catStyle.text}`}>
-                          {catKey}
-                        </span>
-                      )}
-                      <span className="text-[11px] text-white/60 truncate flex-1 min-w-0">
-                        {c.text}
-                      </span>
-                      <span className="text-[9px] text-white/25 font-mono shrink-0">
-                        {format(new Date(c.ts), "HH:mm")}
-                      </span>
-                      <button
-                        onClick={() => dismissComment(c)}
-                        title="Descartar"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Footer */}
-        <div className="px-4 py-2 flex items-center justify-end border-t border-white/[0.04]">
-          <Link
-            href={`/live/${live.video_id}`}
-            className="text-[9px] font-mono font-bold text-white/25 hover:text-white/50 transition-colors flex items-center gap-1"
-          >
-            ver historico completo <ArrowRight size={8} />
-          </Link>
+          )}
+          <div className="px-3 py-1.5 flex items-center justify-end border-t border-white/[0.04]">
+            <Link
+              href={`/live/${live.video_id}`}
+              className="text-[9px] font-mono font-bold text-white/25 hover:text-white/50 transition-colors flex items-center gap-1"
+            >
+              ver tudo <ArrowRight size={8} />
+            </Link>
+          </div>
         </div>
+
+        {/* Coluna direita: barras de categoria */}
+        <div className="flex-[1] min-w-0 px-3 py-2.5 space-y-2.5">
+          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40">
+            Por categoria
+          </p>
+          {categoryBreakdown.length === 0 ? (
+            <p className="text-[10px] text-white/20 font-mono">—</p>
+          ) : (
+            categoryBreakdown.map(([cat, count]) => {
+              const style = CAT_STYLE[cat] ?? CAT_DEFAULT
+              const pct   = Math.round((count / Math.max(categoryTotal, 1)) * 100)
+              return (
+                <div key={cat} className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[8px] font-bold font-mono uppercase ${style.text}`}>
+                      {cat}
+                    </span>
+                    <span className={`font-data text-[10px] font-bold ${style.text}`}>
+                      {count}
+                    </span>
+                  </div>
+                  <div className="h-1 bg-white/[0.06] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${pct}%`, background: style.barColor }}
+                    />
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+
       </div>
     </div>
   )
