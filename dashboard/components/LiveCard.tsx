@@ -314,25 +314,32 @@ export default function LiveCard({
                 return (
                   <div
                     key={c.id}
-                    className={`relative group flex items-center gap-2 px-3 ${commentPadding} border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors`}
+                    className={`relative group flex items-start gap-2 px-3 ${commentPadding} border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors`}
                   >
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
-                    <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
-                    {catKey && (
-                      <span className={`text-[8px] font-bold font-mono shrink-0 ${catStyle.text}`}>
-                        {catKey}
+                    <span className={`block w-1.5 h-1.5 rounded-full shrink-0 mt-1 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        {catKey && (
+                          <span className={`text-[8px] font-bold font-mono shrink-0 ${catStyle.text}`}>
+                            {catKey}
+                          </span>
+                        )}
+                        <span className="text-[8px] text-white/35 font-mono truncate">
+                          {c.author}
+                        </span>
+                        <span className="text-[8px] text-white/20 font-mono shrink-0 ml-auto">
+                          {format(new Date(c.ts), "HH:mm")}
+                        </span>
+                      </div>
+                      <span className={`${commentTextSize} text-white/65 break-words`}>
+                        {c.text}
                       </span>
-                    )}
-                    <span className={`${commentTextSize} text-white/65 flex-1 min-w-0 break-words`}>
-                      {c.text}
-                    </span>
-                    <span className="text-[9px] text-white/25 font-mono shrink-0">
-                      {format(new Date(c.ts), "HH:mm")}
-                    </span>
+                    </div>
                     <button
                       onClick={() => dismissComment(c)}
                       title="Descartar"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70 mt-0.5"
                     >
                       <X size={9} />
                     </button>
