@@ -78,13 +78,9 @@ CHAT_IDLE_RECREATE_SECONDS     = 20
 CHAT_HARD_WATCHDOG_SECONDS     = 45
 CHAT_DEDUP_WINDOW              = 5000
 
-# IA — Cloud Run (produção) ou Ollama local (fallback)
+# IA — Cloud Run (DistilBERT fine-tuned)
 SERVING_URL     = os.environ.get("SERVING_URL", "")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "5"))
-OLLAMA_URL      = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL    = "gemma3:4b"
-OLLAMA_TIMEOUT  = 10
-OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
 
 # HTTP
@@ -107,7 +103,6 @@ SESSION.headers.update(HEADERS)
 for k, v in COOKIE_CONSENT.items():
     SESSION.cookies.set(k, v, domain=".youtube.com")
 
-OLLAMA_SESSION = requests.Session()
 DEFAULT_PARAMS = {"hl": "pt-BR", "gl": "BR"}
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
@@ -492,24 +487,6 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         return []
 
 # ─── CLASSIFICAÇÃO ───────────────────────────────────────────────────────────
-LLM_PROMPT = """Você é um analista de qualidade de transmissões AO VIVO (esportes/entretenimento).
-Sua tarefa é analisar UM ÚNICO comentário de chat e decidir se ele relata um PROBLEMA TÉCNICO real da transmissão em si (áudio, vídeo, sincronia, rede/plataforma, ausência de narração, GC/placar incorreto). LEGENDA/CC nunca conta.
-
-PROCESSO INTERNO (faça mentalmente e só exponha o resultado final):
-Etapa DETECT: identifique se o texto descreve algum sintoma técnico concreto (sem áudio, som chiando/estourado/duplicado/ruim/alto demais/baixo demais/abafado, tela preta, travando/congelando/pixelando, imagem ruim/borrada, áudio atrasado/adiantado, live caiu/carregando/buffering/erro ao abrir, sem narração, placar/GC errado/bugado). Sem sintoma explícito => DETECT = false.
-Etapa VALIDATE: se DETECT = true, confirme se o sintoma realmente é sobre o sinal/reprodução. Comentários puramente de opinião sobre conteúdo ("jogo ruim", "nada a ver"), torcida, dúvidas genéricas ou pedidos não são problemas técnicos. Porém, reclamações de qualidade de áudio/vídeo como "som ruim", "áudio ruim", "som muito alto", "som baixo", "áudio estourado", "imagem ruim" SÃO problemas técnicos válidos — não os descarte como vagos.
-Só retorne is_technical=true se DETECT e VALIDATE forem true.
-Se o comentário disser que ESTÁ TUDO BEM ou negar o problema (ex.: "não tá travando", "som perfeito", "áudio voltou", "agora tá normal"), trate como is_technical=false.
-PLACAR/GC: só considere problema técnico se o texto contiver exatamente "PLACAR ERRADO". Qualquer outro comentário sobre placar/GC deve ser ignorado (is_technical=false).
-
-Severidade: "high" (sem áudio/vídeo, tela preta, live caiu), "medium" (travando, atraso claro, compressão forte), "low" (mudança leve). Se não for técnico, use "none".
-
-FORMATO DE RESPOSTA (JSON único, sem texto antes/depois):
-{"is_technical": <true/false>, "category": "<categoria ou null>", "issue": "<issue ou null>", "severity": "<none|low|medium|high>"}
-
-Agora analise o comentário a seguir:
-"""
-
 CLOUD_CONFIDENCE_THRESHOLD = float(os.environ.get("CLOUD_CONFIDENCE_THRESHOLD", "0.70"))
 
 _cloud_session = requests.Session()
@@ -609,54 +586,14 @@ def cloud_classify(comment: str) -> Optional[dict]:
         _log_debug(f"cloud_classify error: {e}")
         return None
 
-def ollama_classify(comment: str) -> Optional[dict]:
-    try:
-        comment_clean = comment.strip()
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": f"{LLM_PROMPT}Comentário: \"{comment_clean}\"\n-> ",
-            "options": {
-                "temperature": 0.0, "top_p": 0.6, "top_k": 40,
-                "repeat_penalty": 1.15, "num_predict": 160,
-                "keep_alive": OLLAMA_KEEP_ALIVE,
-            },
-            "format": "json",
-            "stream": False,
-        }
-        r = OLLAMA_SESSION.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=OLLAMA_TIMEOUT)
-        r.raise_for_status()
-        obj = json.loads((r.json().get("response") or "").strip())
-        it  = bool(obj.get("is_technical", False))
-        cat = obj.get("category")
-        iss = obj.get("issue")
-        sev = (obj.get("severity") or "none").lower()
-        if sev not in ("none", "low", "medium", "high"):
-            sev = "none"
-        if cat is not None:
-            cat = str(cat).strip() or None
-        if iss is not None:
-            iss = str(iss).strip() or None
-        if cat and isinstance(cat, str) and cat.upper().startswith("LEGENDA"):
-            it, cat, iss, sev = False, None, None, "none"
-        if it and cat and "PLACAR" in (cat or "").upper():
-            if "PLACAR ERRADO" not in comment_clean.upper():
-                it, cat, iss, sev = False, None, None, "none"
-        return {"is_technical": it, "category": cat, "issue": iss, "severity": sev, "_raw": obj}
-    except Exception as e:
-        _log_debug(f"ollama_classify error: {e}")
-        return None
-
 def classify(comment: str) -> Optional[dict]:
-    """Ponto de entrada único: Cloud Run → Ollama fallback."""
+    """Classifica via Cloud Run (DistilBERT fine-tuned)."""
     if len(comment) > MAX_COMMENT_LENGTH:
         return None
-    if SERVING_URL:
-        result = cloud_classify(comment)
-        if result is not None:
-            return result
-        # HTTPAdapter já faz retry interno; se falhou, tenta Ollama
-        return ollama_classify(comment)
-    return ollama_classify(comment)
+    if not SERVING_URL:
+        _log_debug("classify: SERVING_URL não configurado")
+        return None
+    return cloud_classify(comment)
 
 # ─── MONITOR DE CHAT (processo filho) ────────────────────────────────────────
 def _sig(author: str, msg: str, ts_iso: Optional[str], mid: Optional[str]) -> str:
@@ -1029,7 +966,7 @@ if __name__ == "__main__":
 
     print("=" * 60)
     print("  Monitor de Lives — CazéTV")
-    print(f"  Cloud Run : {SERVING_URL or 'desativado (usando Ollama)'}")
+    print(f"  Cloud Run : {SERVING_URL or 'NAO CONFIGURADO — defina SERVING_URL'}")
     print(f"  Firestore : {'ativo' if FIRESTORE_ENABLED else 'desativado'}")
     print("=" * 60)
     for ch in CHANNELS:
