@@ -319,7 +319,7 @@ export default function LiveCard({
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
                     <span className={`block w-1.5 h-1.5 rounded-full shrink-0 mt-1 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
+                      <div className="flex items-center gap-1.5">
                         {catKey && (
                           <span className={`text-[8px] font-bold font-mono shrink-0 ${catStyle.text}`}>
                             {catKey}
