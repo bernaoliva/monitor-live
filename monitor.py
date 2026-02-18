@@ -79,7 +79,7 @@ CHAT_HARD_WATCHDOG_SECONDS     = 45
 CHAT_DEDUP_WINDOW              = 5000
 
 # IA — Cloud Run (produção) ou Ollama local (fallback)
-SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
+SERVING_URL     = os.environ.get("SERVING_URL", "")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "5"))
 OLLAMA_URL      = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL    = "gemma3:4b"
