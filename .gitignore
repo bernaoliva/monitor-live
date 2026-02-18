@@ -26,8 +26,9 @@ node_modules/
 out/
 dashboard/.vercel/
 
-# === CLAUDE (sessão local) ===
+# === IDE / TOOLS ===
 .claude/
+CLAUDE.md
 
 # === DEBUG ===
 debug_html/
