@@ -323,7 +323,7 @@ export default function LiveCard({
                         {catKey}
                       </span>
                     )}
-                    <span className={`${commentTextSize} text-white/65 truncate flex-1 min-w-0`}>
+                    <span className={`${commentTextSize} text-white/65 flex-1 min-w-0 break-words`}>
                       {c.text}
                     </span>
                     <span className="text-[9px] text-white/25 font-mono shrink-0">
