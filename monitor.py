@@ -754,6 +754,14 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
             pass
         queue.put({"type": "log", "msg": f"[{proc_name}] encerrado", "ts": now_iso()})
 
+# ─── LIMPEZA DE EMOJIS CUSTOM DO YOUTUBE ──────────────────────────────────────
+_YT_EMOJI_RE = re.compile(r":[^:\s]{1,50}:")
+
+def _clean_yt_emojis(text: str) -> str:
+    """Remove emoji codes custom do YouTube (:nome:) da mensagem.
+    Emojis Unicode normais (😂❤️🔥) passam intactos."""
+    return _YT_EMOJI_RE.sub("", text).strip()
+
 # ─── PRÉ-FILTRO RÁPIDO (descarta mensagens óbvias sem chamar IA) ─────────────
 _PREFILTER_SKIP = re.compile(
     r"^[\U0001F600-\U0001FAFF\U00002702-\U000027B0\s❤️🔥👏😂🤣💀😍🥰😭😎👍🇧🇷]+$"  # só emojis
@@ -774,6 +782,11 @@ _classify_pool: Optional[ThreadPoolExecutor] = None
 def _process_chat_item(vid: str, author: str, text: str, ts: str):
     """Classifica e salva um comentário. Roda dentro do ThreadPoolExecutor."""
     try:
+        # Limpa emoji codes custom do YouTube (:nome:) antes de tudo
+        text = _clean_yt_emojis(text)
+        if not text:
+            return  # mensagem era só emojis custom — ignora
+
         comment_id = hashlib.sha1(
             f"{author}{ts}{text}".encode("utf-8", errors="ignore")
         ).hexdigest()[:16]
