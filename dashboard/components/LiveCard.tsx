@@ -164,6 +164,11 @@ export default function LiveCard({
 
   const lastFiveComments = visibleComments.slice(0, 5)
 
+  // Fonte e padding escalam conforme o número de comentários para caber sem expandir o card
+  const n = lastFiveComments.length
+  const commentTextSize = n <= 2 ? "text-[11px]" : n === 3 ? "text-[10px]" : "text-[9px]"
+  const commentPadding  = n <= 2 ? "py-2.5"      : n === 3 ? "py-2"        : "py-1.5"
+
   // Gráfico: aplica dismissed imediatamente sem esperar o Firestore
   const chartData = useMemo(() => {
     const adjusted = comments.map((c) =>
@@ -297,19 +302,19 @@ export default function LiveCard({
             </span>
             <span className="font-data text-[9px] text-white/30 ml-auto">{visibleComments.length}</span>
           </div>
-          {visibleComments.length === 0 ? (
-            <div className="px-3 py-4 text-[10px] text-white/25 font-mono">
-              Nenhum problema detectado
-            </div>
-          ) : (
-            <div>
-              {lastFiveComments.map((c) => {
+          <div className="h-[130px] overflow-hidden flex flex-col justify-start">
+            {visibleComments.length === 0 ? (
+              <div className="px-3 py-4 text-[10px] text-white/25 font-mono">
+                Nenhum problema detectado
+              </div>
+            ) : (
+              lastFiveComments.map((c) => {
                 const catKey   = normalizeCategory(c.category) ?? ""
                 const catStyle = CAT_STYLE[catKey] ?? CAT_DEFAULT
                 return (
                   <div
                     key={c.id}
-                    className="relative group flex items-center gap-2 px-3 py-2 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
+                    className={`relative group flex items-center gap-2 px-3 ${commentPadding} border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors`}
                   >
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
                     <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
@@ -318,7 +323,7 @@ export default function LiveCard({
                         {catKey}
                       </span>
                     )}
-                    <span className="text-[11px] text-white/65 truncate flex-1 min-w-0">
+                    <span className={`${commentTextSize} text-white/65 truncate flex-1 min-w-0`}>
                       {c.text}
                     </span>
                     <span className="text-[9px] text-white/25 font-mono shrink-0">
@@ -333,9 +338,9 @@ export default function LiveCard({
                     </button>
                   </div>
                 )
-              })}
-            </div>
-          )}
+              })
+            )}
+          </div>
           <div className="px-3 py-1.5 flex items-center justify-end border-t border-white/[0.04]">
             <Link
               href={`/live/${live.video_id}`}
