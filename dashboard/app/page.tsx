@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { collection, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live } from "@/lib/types"
@@ -8,10 +9,12 @@ import LiveCard from "@/components/LiveCard"
 import { Tv2, Wifi, WifiOff, Activity } from "lucide-react"
 
 export default function HomePage() {
-  const [lives, setLives]         = useState<Live[]>([])
-  const [connected, setConnected] = useState(false)
-  const [hidden, setHidden]       = useState<Set<string>>(new Set())
-  const orderRef                  = useRef<string[]>([])
+  const searchParams                = useSearchParams()
+  const tv                          = searchParams.get("tv") === "true"
+  const [lives, setLives]           = useState<Live[]>([])
+  const [connected, setConnected]   = useState(false)
+  const [hidden, setHidden]         = useState<Set<string>>(new Set())
+  const orderRef                    = useRef<string[]>([])
 
   // Carrega IDs ocultos do localStorage apenas no cliente
   useEffect(() => {
@@ -72,6 +75,58 @@ export default function HomePage() {
     return Date.now() - new Date(l.last_seen_at).getTime() < STALE_MS
   })
 
+  // Grid: 1 col para 1 live, 2 cols para 2, 3 cols para 3+
+  const gridCols =
+    active.length <= 1 ? "" :
+    active.length === 2 ? "grid grid-cols-2 gap-4 items-start" :
+    "grid grid-cols-2 xl:grid-cols-3 gap-3 items-start"
+
+  // Modo TV: tela cheia, sem header da página
+  if (tv) {
+    return (
+      <div className="fixed inset-0 z-[60] bg-bg p-3 overflow-hidden">
+        {/* Status bar minimalista */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className="relative w-1.5 h-1.5">
+              <div className="absolute inset-0 rounded-full bg-red-500 pulse-dot" />
+              <div className="absolute inset-0 rounded-full bg-red-500" />
+            </div>
+            <span className="text-[10px] font-bold text-white/40 font-mono tracking-wider">
+              MONITOR — {active.length} stream{active.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className={`flex items-center gap-1 text-[9px] font-bold font-mono ${
+            connected ? "text-emerald-400/60" : "text-red-400/60"
+          }`}>
+            {connected ? <Wifi size={8} /> : <WifiOff size={8} />}
+            {connected ? "ONLINE" : "OFFLINE"}
+          </div>
+        </div>
+
+        {active.length > 0 ? (
+          <div className={`h-[calc(100vh-48px)] ${
+            active.length === 1 ? "grid grid-cols-1" :
+            active.length === 2 ? "grid grid-cols-2 gap-3" :
+            active.length <= 4 ? "grid grid-cols-2 grid-rows-2 gap-3" :
+            "grid grid-cols-3 grid-rows-2 gap-2"
+          }`}>
+            {active.map((live) => (
+              <div key={live.video_id} className="overflow-hidden min-h-0">
+                <LiveCard live={live} compact onDismiss={() => hideCard(live.video_id)} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="h-[calc(100vh-48px)] flex flex-col items-center justify-center text-center">
+            <Tv2 size={48} className="text-white/6 mb-3" />
+            <p className="text-white/25 text-sm font-medium">Aguardando streams</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -99,7 +154,7 @@ export default function HomePage() {
 
       {/* Active streams */}
       {active.length > 0 && (
-        <div className={`fade-d1 ${active.length > 1 ? "grid grid-cols-2 gap-4 items-start" : "space-y-4"}`}>
+        <div className={`fade-d1 ${gridCols}`}>
           {active.map((live) => (
             <LiveCard key={live.video_id} live={live} onDismiss={() => hideCard(live.video_id)} />
           ))}
