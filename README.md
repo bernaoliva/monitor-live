@@ -12,15 +12,15 @@ monitor.py (pytchat)
     |
     v
 Classificacao IA -----> Firestore
-  (Cloud Run GPU          |
-   ou Ollama local)       v
+  (Cloud Run GPU)           |
+                            v
                       Dashboard Next.js
                       (Vercel)
 ```
 
 **Coletor** (`monitor.py`): captura mensagens do chat via pytchat, classifica cada uma com IA e salva no Firestore.
 
-**Classificador**: DistilBERT multilingual fine-tuned servido no Cloud Run com GPU. Fallback local via Ollama. Sistema de 3 camadas: pre-filtro por regex, modelo de IA, e guard de keywords para evitar falsos positivos.
+**Classificador**: DistilBERT multilingual fine-tuned servido no Cloud Run com GPU. Sistema de 3 camadas: pre-filtro por regex, modelo de IA, e guard de keywords para evitar falsos positivos.
 
 **Dashboard** (`dashboard/`): Next.js 16 + Tailwind + Recharts com dados em tempo real via Firestore `onSnapshot`.
 
@@ -36,7 +36,7 @@ Classificacao IA -----> Firestore
 |---|---|
 | Coletor de chat | Python + pytchat |
 | Classificacao IA | DistilBERT multilingual (fine-tuned) |
-| Inferencia | Cloud Run GPU (NVIDIA T4) ou Ollama local |
+| Inferencia | Cloud Run GPU (NVIDIA T4) |
 | Banco de dados | Firebase Firestore |
 | Dashboard | Next.js 16 + Tailwind CSS + Recharts |
 | Hosting | Vercel |
@@ -60,7 +60,7 @@ npm run dev
 pip install pytchat firebase-admin requests
 
 # Coloque seu firebase-credentials.json na raiz do projeto
-# Configure a URL do classificador (opcional — usa Ollama local como fallback)
+# Configure a URL do classificador (Cloud Run)
 export SERVING_URL="https://seu-servico.run.app"
 
 python monitor.py
@@ -128,8 +128,7 @@ monitor-live/
 | Variavel | Descricao | Default |
 |---|---|---|
 | `FIREBASE_CREDENTIALS` | Caminho para o JSON de credenciais | `firebase-credentials.json` |
-| `SERVING_URL` | URL do classificador no Cloud Run | (vazio — usa Ollama local) |
-| `OLLAMA_URL` | URL do Ollama local | `http://localhost:11434` |
+| `SERVING_URL` | URL do classificador no Cloud Run | (obrigatorio) |
 | `LLM_WORKERS` | Workers paralelos de classificacao | `4` |
 
 ## Licenca
