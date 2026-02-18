@@ -1,19 +1,17 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { useSearchParams } from "next/navigation"
 import { collection, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live } from "@/lib/types"
 import LiveCard from "@/components/LiveCard"
-import { Tv2, Wifi, WifiOff, Activity } from "lucide-react"
+import { Tv2, Wifi, WifiOff, Activity, Monitor, X } from "lucide-react"
 
 export default function HomePage() {
-  const searchParams                = useSearchParams()
-  const tv                          = searchParams.get("tv") === "true"
   const [lives, setLives]           = useState<Live[]>([])
   const [connected, setConnected]   = useState(false)
   const [hidden, setHidden]         = useState<Set<string>>(new Set())
+  const [tv, setTv]                 = useState(false)
   const orderRef                    = useRef<string[]>([])
 
   // Carrega IDs ocultos do localStorage apenas no cliente
@@ -96,11 +94,21 @@ export default function HomePage() {
               MONITOR — {active.length} stream{active.length !== 1 ? "s" : ""}
             </span>
           </div>
-          <div className={`flex items-center gap-1 text-[9px] font-bold font-mono ${
-            connected ? "text-emerald-400/60" : "text-red-400/60"
-          }`}>
-            {connected ? <Wifi size={8} /> : <WifiOff size={8} />}
-            {connected ? "ONLINE" : "OFFLINE"}
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-1 text-[9px] font-bold font-mono ${
+              connected ? "text-emerald-400/60" : "text-red-400/60"
+            }`}>
+              {connected ? <Wifi size={8} /> : <WifiOff size={8} />}
+              {connected ? "ONLINE" : "OFFLINE"}
+            </div>
+            <button
+              onClick={() => setTv(false)}
+              className="flex items-center gap-1 text-[9px] font-bold font-mono text-white/30 hover:text-white/60 transition-colors"
+              title="Sair do modo TV"
+            >
+              <X size={10} />
+              SAIR
+            </button>
           </div>
         </div>
 
@@ -142,13 +150,23 @@ export default function HomePage() {
             </p>
           </div>
         </div>
-        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold font-mono tracking-wider ${
-          connected
-            ? "text-emerald-400/80 bg-emerald-500/8 border border-emerald-500/15"
-            : "text-red-400/80 bg-red-500/8 border border-red-500/15"
-        }`}>
-          {connected ? <Wifi size={10} /> : <WifiOff size={10} />}
-          {connected ? "ONLINE" : "OFFLINE"}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTv(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold font-mono tracking-wider text-white/30 hover:text-white/60 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
+            title="Modo TV — fullscreen para monitoramento"
+          >
+            <Monitor size={10} />
+            MODO TV
+          </button>
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold font-mono tracking-wider ${
+            connected
+              ? "text-emerald-400/80 bg-emerald-500/8 border border-emerald-500/15"
+              : "text-red-400/80 bg-red-500/8 border border-red-500/15"
+          }`}>
+            {connected ? <Wifi size={10} /> : <WifiOff size={10} />}
+            {connected ? "ONLINE" : "OFFLINE"}
+          </div>
         </div>
       </div>
 
