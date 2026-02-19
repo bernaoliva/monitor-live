@@ -157,7 +157,9 @@ def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
         })
         # Agrega por minuto para o gráfico (evita o browser baixar todos os comentários)
         try:
-            minute_key = ts[:16].split("T")[-1][:5] if "T" in ts else ts[:5]  # HH:mm
+            # Extrai HH:mm de qualquer formato: ISO (2026-02-19T18:57:29) ou espaço (2026-02-19 18:57:29)
+            time_part = ts.split("T")[-1] if "T" in ts else ts.split(" ")[-1] if " " in ts else ts
+            minute_key = time_part[:5]  # HH:mm
             if minute_key and len(minute_key) == 5:
                 live_ref.collection("minutes").document(minute_key).set({
                     "total":     fb_firestore.Increment(1),
