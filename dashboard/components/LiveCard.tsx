@@ -189,24 +189,31 @@ export default function LiveCard({
     techRate > 5  ? "border-amber-500/25" :
     ""
 
-  // Categoria do último problema (para cor do flash)
+  // Cores do flash por categoria (fill, borda luminosa)
   const lastCat = lastFiveComments[0] ? normalizeCategory(lastFiveComments[0].category) : null
-  const lastCatStyle = lastCat ? (CAT_STYLE[lastCat] ?? CAT_DEFAULT) : CAT_DEFAULT
-  const flashColor = lastCat === "AUDIO" ? "rgba(96,165,250,0.15)"
-    : lastCat === "VIDEO" ? "rgba(192,132,252,0.15)"
-    : lastCat === "REDE" ? "rgba(251,146,60,0.15)"
-    : lastCat === "GC" ? "rgba(34,211,238,0.15)"
-    : "rgba(239,68,68,0.12)"
+  const flashFill   = lastCat === "AUDIO" ? "rgba(96,165,250,0.55)"
+    : lastCat === "VIDEO" ? "rgba(192,132,252,0.55)"
+    : lastCat === "REDE"  ? "rgba(251,146,60,0.55)"
+    : lastCat === "GC"    ? "rgba(34,211,238,0.55)"
+    : "rgba(239,68,68,0.55)"
+  const flashBorder = lastCat === "AUDIO" ? "rgba(96,165,250,0.9)"
+    : lastCat === "VIDEO" ? "rgba(192,132,252,0.9)"
+    : lastCat === "REDE"  ? "rgba(251,146,60,0.9)"
+    : lastCat === "GC"    ? "rgba(34,211,238,0.9)"
+    : "rgba(239,68,68,0.9)"
 
   return (
     <div className={`panel overflow-hidden relative ${alertBorder}`}>
 
-      {/* Flash overlay ao detectar novo problema */}
+      {/* Flash ao detectar novo problema — 3 pulsadas + borda luminosa */}
       {alertKey > 0 && (
         <div
           key={alertKey}
           className="absolute inset-0 z-10 alert-flash rounded-lg"
-          style={{ background: `linear-gradient(180deg, ${flashColor} 0%, transparent 60%)` }}
+          style={{
+            background: `linear-gradient(180deg, ${flashFill} 0%, rgba(0,0,0,0) 75%)`,
+            boxShadow: `inset 0 0 0 2px ${flashBorder}`,
+          }}
         />
       )}
 
