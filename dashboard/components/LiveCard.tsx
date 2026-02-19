@@ -296,7 +296,7 @@ export default function LiveCard({
       <div className="border-t border-white/[0.06] flex min-h-0">
 
         {/* Coluna esquerda: últimos 5 comentários técnicos */}
-        <div className="flex-[2] min-w-0 border-r border-white/[0.06]">
+        <div className="flex-[4] min-w-0 border-r border-white/[0.06]">
           <div className="px-3 py-2 flex items-center gap-1.5 border-b border-white/[0.04]">
             <AlertTriangle size={9} className="text-red-400/60 shrink-0" />
             <span className="text-[8px] font-bold font-mono uppercase tracking-wider text-white/40">
@@ -331,7 +331,7 @@ export default function LiveCard({
                           {c.author}
                         </span>
                         <span className="text-[10px] text-white/70 font-mono font-bold shrink-0 ml-auto">
-                          {format(new Date(c.ts), "HH:mm:ss")}
+                          {format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}
                         </span>
                       </div>
                       <span className={`${commentTextSize} text-white/65 break-words`}>
