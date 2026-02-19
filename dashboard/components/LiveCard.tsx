@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import Link from "next/link"
 import {
-  collection, onSnapshot, query, orderBy, where,
+  collection, onSnapshot, query, orderBy, where, limit,
   doc, updateDoc, increment,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
@@ -106,9 +106,11 @@ export default function LiveCard({
   }
 
   useEffect(() => {
+    // Chart: últimos 500 comentários (suficiente para tendência visual)
     const q = query(
       collection(db, "lives", live.video_id, "comments"),
-      orderBy("ts", "asc")
+      orderBy("ts", "desc"),
+      limit(500)
     )
     const unsub = onSnapshot(q, (snap) => {
       setComments(
@@ -128,9 +130,12 @@ export default function LiveCard({
       )
     })
 
+    // Feed: últimos 50 técnicos (mostra 5, mas precisa de margem para dismissed)
     const qTech = query(
       collection(db, "lives", live.video_id, "comments"),
-      where("is_technical", "==", true)
+      where("is_technical", "==", true),
+      orderBy("ts", "desc"),
+      limit(50)
     )
     const unsubTech = onSnapshot(qTech, (snap) => {
       setAllTechComments(
@@ -183,23 +188,25 @@ export default function LiveCard({
     return buildChartData(adjusted)
   }, [comments, dismissed])
 
-  const totalTechCount = allTechComments.filter(c => !dismissed.has(c.id)).length
+  // Usa contadores do documento live (não dos comentários limitados)
+  const totalTechCount = live.technical_comments ?? 0
   const techRate = Math.round(
     (totalTechCount / Math.max(live.total_comments, 1)) * 100
   )
 
+  // Categorias: usa issue_counts do documento live (mais leve que iterar comentários)
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
-    visibleComments.forEach((c) => {
-      const cat = normalizeCategory(c.category)
-      if (cat) {
-        acc[cat] = (acc[cat] || 0) + 1
+    Object.entries(live.issue_counts ?? {}).forEach(([key, count]) => {
+      const cat = normalizeCategory(key.split(":")[0])
+      if (cat && count > 0) {
+        acc[cat] = (acc[cat] || 0) + count
       }
     })
     return Object.entries(acc)
       .filter(([, c]) => c > 0)
       .sort(([, a], [, b]) => b - a)
-  }, [visibleComments])
+  }, [live.issue_counts])
 
   const categoryTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
 
