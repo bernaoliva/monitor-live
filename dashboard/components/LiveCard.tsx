@@ -170,19 +170,17 @@ export default function LiveCard({
     (totalTechCount / Math.max(live.total_comments, 1)) * 100
   )
 
-  // Categorias: usa issue_counts do documento live (mais leve que iterar comentários)
+  // Categorias: computa dos comentários técnicos visíveis — igual ao detail page
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
-    Object.entries(live.issue_counts ?? {}).forEach(([key, count]) => {
-      const cat = normalizeCategory(key.split(":")[0])
-      if (cat && count > 0) {
-        acc[cat] = (acc[cat] || 0) + count
-      }
+    visibleComments.forEach((c) => {
+      const cat = normalizeCategory(c.category)
+      if (cat) acc[cat] = (acc[cat] || 0) + 1
     })
     return Object.entries(acc)
       .filter(([, c]) => c > 0)
       .sort(([, a], [, b]) => b - a)
-  }, [live.issue_counts])
+  }, [visibleComments])
 
   const categoryTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
 
