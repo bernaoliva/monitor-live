@@ -155,6 +155,16 @@ def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
             **({"issue_counts": {f"{category}:{issue}": fb_firestore.Increment(1)}}
                if is_technical and category and issue else {}),
         })
+        # Agrega por minuto para o gráfico (evita o browser baixar todos os comentários)
+        try:
+            minute_key = ts[:16].split("T")[-1][:5] if "T" in ts else ts[:5]  # HH:mm
+            if minute_key and len(minute_key) == 5:
+                live_ref.collection("minutes").document(minute_key).set({
+                    "total":     fb_firestore.Increment(1),
+                    "technical": fb_firestore.Increment(1 if is_technical else 0),
+                }, merge=True)
+        except Exception:
+            pass  # não falha se agregar der erro
     except Exception as e:
         _log_debug(f"[Firestore] fs_add_comment error: {e}")
 

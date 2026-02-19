@@ -12,18 +12,6 @@ import CommentsChart from "@/components/CommentsChart"
 import { ExternalLink, AlertTriangle, ArrowRight, X } from "lucide-react"
 import { format } from "date-fns"
 
-function buildChartData(comments: Comment[]): ChartPoint[] {
-  const buckets: Record<string, { total: number; technical: number }> = {}
-  comments.forEach((c) => {
-    const minute = format(new Date(c.ts), "HH:mm")
-    if (!buckets[minute]) buckets[minute] = { total: 0, technical: 0 }
-    buckets[minute].total++
-    if (c.is_technical) buckets[minute].technical++
-  })
-  return Object.entries(buckets)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([minute, v]) => ({ minute, ...v }))
-}
 
 function normalizeCategory(raw: string | null | undefined): string | null {
   if (!raw) return null
@@ -68,7 +56,7 @@ export default function LiveCard({
   onDismiss?: () => void
   compact?: boolean
 }) {
-  const [comments,      setComments]      = useState<Comment[]>([])
+  const [chartData,     setChartData]     = useState<ChartPoint[]>([])
   const [allTechComments, setAllTechComments] = useState<Comment[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [alertKey, setAlertKey] = useState(0)
@@ -106,27 +94,20 @@ export default function LiveCard({
   }
 
   useEffect(() => {
-    // Chart: últimos 500 comentários (suficiente para tendência visual)
-    const q = query(
-      collection(db, "lives", live.video_id, "comments"),
-      orderBy("ts", "desc"),
-      limit(500)
+    // Chart: lê agregados por minuto (leve — ~200 docs em vez de 50k+)
+    const qMinutes = query(
+      collection(db, "lives", live.video_id, "minutes"),
     )
-    const unsub = onSnapshot(q, (snap) => {
-      setComments(
+    const unsub = onSnapshot(qMinutes, (snap) => {
+      setChartData(
         snap.docs.map((d) => {
           const raw = d.data()
           return {
-            id:           d.id,
-            author:       raw.author       ?? "",
-            text:         raw.text         ?? "",
-            ts:           raw.ts           ?? "",
-            is_technical: raw.is_technical ?? false,
-            category:     raw.category     ?? null,
-            issue:        raw.issue        ?? null,
-            severity:     raw.severity     ?? "none",
-          } satisfies Comment
-        })
+            minute:    d.id,
+            total:     raw.total     ?? 0,
+            technical: raw.technical ?? 0,
+          } satisfies ChartPoint
+        }).sort((a, b) => a.minute.localeCompare(b.minute))
       )
     })
 
@@ -180,13 +161,6 @@ export default function LiveCard({
   const n = lastFiveComments.length
   const commentTextSize = n <= 2 ? "text-[11px]" : n === 3 ? "text-[10px]" : "text-[9px]"
   const commentPadding  = n <= 2 ? "py-2.5"      : n === 3 ? "py-2"        : "py-1.5"
-
-  const chartData = useMemo(() => {
-    const adjusted = comments.map((c) =>
-      dismissed.has(c.id) ? { ...c, is_technical: false } : c
-    )
-    return buildChartData(adjusted)
-  }, [comments, dismissed])
 
   // Usa contadores do documento live (não dos comentários limitados)
   const totalTechCount = live.technical_comments ?? 0
