@@ -439,6 +439,17 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 for vid in _extract_live_video_ids_from_html(html):
                     ok, title = is_live_now(vid)
                     if ok: return (vid, title or oembed_title(vid))
+                # YouTube /live parou de redirecionar — extrai videoId do canonical link
+                for pat in [
+                    r'"canonical"[^>]*?watch\?v=([A-Za-z0-9_-]{11})',
+                    r'"canonicalBaseUrl"\s*:\s*"/watch\?v=([A-Za-z0-9_-]{11})"',
+                ]:
+                    m = re.search(pat, html)
+                    if m:
+                        vid = m.group(1)
+                        ok, title = is_live_now(vid)
+                        if ok: return (vid, title or oembed_title(vid))
+                        break
         except Exception as e:
             _log_debug(f"[_try_live_endpoint] parse erro: {e}")
         return None
@@ -856,8 +867,13 @@ def _flush_pending_counts():
                 "technical_comments": fb_firestore.Increment(c["technical"]),
                 "last_seen_at":       now_iso(),
             }
-            for key, n in c["issue_counts"].items():
-                upd[f"issue_counts.{key}"] = fb_firestore.Increment(n)
+            # Usa nested dict (não dot-notation) para issue_counts:
+            # evita erro "Invalid char" quando a categoria tem '/' (ex: REDE/PLATAFORMA)
+            if c["issue_counts"]:
+                upd["issue_counts"] = {
+                    key: fb_firestore.Increment(n)
+                    for key, n in c["issue_counts"].items()
+                }
             fs.collection("lives").document(vid).update(upd)
         except Exception as e:
             _log_debug(f"[counter_flush] {vid}: {e}")
