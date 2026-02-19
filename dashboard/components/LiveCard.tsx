@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useRef } from "react"
 import Link from "next/link"
 import {
   collection, onSnapshot, query, orderBy, where,
@@ -10,7 +10,8 @@ import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
 import { ExternalLink, AlertTriangle, ArrowRight, X } from "lucide-react"
-import { format } from "date-fns"
+import { format, formatDistanceToNowStrict } from "date-fns"
+import { ptBR } from "date-fns/locale"
 
 function buildChartData(comments: Comment[]): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
@@ -35,6 +36,17 @@ function normalizeCategory(raw: string | null | undefined): string | null {
   return u
 }
 
+function timeAgo(ts: string): string {
+  try {
+    const d = new Date(ts)
+    const diffMs = Date.now() - d.getTime()
+    if (diffMs < 60_000) return "agora"
+    return "há " + formatDistanceToNowStrict(d, { locale: ptBR, addSuffix: false })
+  } catch {
+    return ""
+  }
+}
+
 const SEV_DOT: Record<string, string> = {
   high:   "bg-red-400",
   medium: "bg-amber-400",
@@ -44,8 +56,8 @@ const SEV_DOT: Record<string, string> = {
 
 type CatStyleEntry = {
   bg: string; text: string; border: string
-  leftBar: string  // cor para a barra lateral esquerda
-  barColor: string // cor hex para a barra de progresso
+  leftBar: string
+  barColor: string
 }
 
 const CAT_STYLE: Record<string, CatStyleEntry> = {
@@ -71,6 +83,8 @@ export default function LiveCard({
   const [comments,      setComments]      = useState<Comment[]>([])
   const [allTechComments, setAllTechComments] = useState<Comment[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const [alertKey, setAlertKey] = useState(0)
+  const prevTechCountRef = useRef(0)
 
   // Carrega dismissed do localStorage ao montar
   useEffect(() => {
@@ -126,7 +140,6 @@ export default function LiveCard({
       )
     })
 
-    // Query idêntica à da página de detalhe — todos os técnicos da transmissão
     const qTech = query(
       collection(db, "lives", live.video_id, "comments"),
       where("is_technical", "==", true)
@@ -152,9 +165,7 @@ export default function LiveCard({
     return () => { unsub(); unsubTech() }
   }, [live.video_id])
 
-  const techComments    = comments.filter((c) => c.is_technical)
-
-  // Feed: all technical comments (not just last 200), sorted newest first, excluding dismissed
+  // Feed: todos os técnicos, newest first, excluindo dismissed
   const visibleComments = useMemo(() =>
     [...allTechComments]
       .filter((c) => !dismissed.has(c.id))
@@ -162,14 +173,21 @@ export default function LiveCard({
     [allTechComments, dismissed]
   )
 
+  // Alerta flash quando surge novo problema técnico
+  useEffect(() => {
+    const currentCount = visibleComments.length
+    if (prevTechCountRef.current > 0 && currentCount > prevTechCountRef.current) {
+      setAlertKey(k => k + 1)
+    }
+    prevTechCountRef.current = currentCount
+  }, [visibleComments.length])
+
   const lastFiveComments = visibleComments.slice(0, 5)
 
-  // Fonte e padding escalam conforme o número de comentários para caber sem expandir o card
   const n = lastFiveComments.length
   const commentTextSize = n <= 2 ? "text-[11px]" : n === 3 ? "text-[10px]" : "text-[9px]"
   const commentPadding  = n <= 2 ? "py-2.5"      : n === 3 ? "py-2"        : "py-1.5"
 
-  // Gráfico: aplica dismissed imediatamente sem esperar o Firestore
   const chartData = useMemo(() => {
     const adjusted = comments.map((c) =>
       dismissed.has(c.id) ? { ...c, is_technical: false } : c
@@ -177,13 +195,11 @@ export default function LiveCard({
     return buildChartData(adjusted)
   }, [comments, dismissed])
 
-  // Mesma fonte de verdade da página de detalhe
   const totalTechCount = allTechComments.filter(c => !dismissed.has(c.id)).length
   const techRate = Math.round(
     (totalTechCount / Math.max(live.total_comments, 1)) * 100
   )
 
-  // Problemas citados: conta diretamente dos comentários técnicos visíveis
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
     visibleComments.forEach((c) => {
@@ -199,14 +215,31 @@ export default function LiveCard({
 
   const categoryTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
 
-  // Cor de alerta do card baseada na taxa de problemas
   const alertBorder =
     techRate > 15 ? "border-red-500/40" :
     techRate > 5  ? "border-amber-500/25" :
     ""
 
+  // Categoria do último problema (para cor do flash)
+  const lastCat = lastFiveComments[0] ? normalizeCategory(lastFiveComments[0].category) : null
+  const lastCatStyle = lastCat ? (CAT_STYLE[lastCat] ?? CAT_DEFAULT) : CAT_DEFAULT
+  const flashColor = lastCat === "AUDIO" ? "rgba(96,165,250,0.15)"
+    : lastCat === "VIDEO" ? "rgba(192,132,252,0.15)"
+    : lastCat === "REDE" ? "rgba(251,146,60,0.15)"
+    : lastCat === "GC" ? "rgba(34,211,238,0.15)"
+    : "rgba(239,68,68,0.12)"
+
   return (
-    <div className={`panel overflow-hidden ${alertBorder}`}>
+    <div className={`panel overflow-hidden relative ${alertBorder}`}>
+
+      {/* Flash overlay ao detectar novo problema */}
+      {alertKey > 0 && (
+        <div
+          key={alertKey}
+          className="absolute inset-0 z-10 alert-flash rounded-lg"
+          style={{ background: `linear-gradient(180deg, ${flashColor} 0%, transparent 60%)` }}
+        />
+      )}
 
       {/* Header */}
       <div className="flex items-start justify-between px-4 pt-4 pb-3">
@@ -328,8 +361,8 @@ export default function LiveCard({
                         <span className="text-[8px] text-white/35 font-mono truncate">
                           {c.author}
                         </span>
-                        <span className="text-[8px] text-white/20 font-mono shrink-0 ml-auto">
-                          {format(new Date(c.ts), "HH:mm")}
+                        <span className="text-[8px] text-white/20 font-mono shrink-0 ml-auto" title={format(new Date(c.ts), "HH:mm:ss")}>
+                          {timeAgo(c.ts)}
                         </span>
                       </div>
                       <span className={`${commentTextSize} text-white/65 break-words`}>
