@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import Link from "next/link"
 import {
-  collection, onSnapshot, query, orderBy, limit,
+  collection, onSnapshot, query, where,
   doc, updateDoc, increment,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
@@ -100,23 +100,24 @@ export default function LiveCard({
     )
     const unsub = onSnapshot(qMinutes, (snap) => {
       setChartData(
-        snap.docs.map((d) => {
-          const raw = d.data()
-          return {
-            minute:    d.id,
-            total:     raw.total     ?? 0,
-            technical: raw.technical ?? 0,
-          } satisfies ChartPoint
-        }).sort((a, b) => a.minute.localeCompare(b.minute))
+        snap.docs
+          .filter((d) => /^\d{2}:\d{2}$/.test(d.id))  // ignora chaves inválidas
+          .map((d) => {
+            const raw = d.data()
+            return {
+              minute:    d.id,
+              total:     raw.total     ?? 0,
+              technical: raw.technical ?? 0,
+            } satisfies ChartPoint
+          })
+          .sort((a, b) => a.minute.localeCompare(b.minute))
       )
     })
 
-    // Feed: últimas 200 mensagens ordenadas por ts desc, filtramos técnicos em JS
-    // (evita índice composto where+orderBy que pode não existir no Firestore)
+    // Feed: todos os técnicos — igual ao detail page (where sem orderBy, sem índice composto)
     const qTech = query(
       collection(db, "lives", live.video_id, "comments"),
-      orderBy("ts", "desc"),
-      limit(200)
+      where("is_technical", "==", true)
     )
     const unsubTech = onSnapshot(qTech, (snap) => {
       setAllTechComments(
@@ -134,7 +135,6 @@ export default function LiveCard({
               severity:     raw.severity     ?? "none",
             } satisfies Comment
           })
-          .filter((c) => c.is_technical)
       )
     }, (err) => console.error("[LiveCard] tech feed error:", err))
 
