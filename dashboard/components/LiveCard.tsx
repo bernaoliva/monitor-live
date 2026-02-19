@@ -10,8 +10,7 @@ import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
 import { ExternalLink, AlertTriangle, ArrowRight, X } from "lucide-react"
-import { format, formatDistanceToNowStrict } from "date-fns"
-import { ptBR } from "date-fns/locale"
+import { format } from "date-fns"
 
 function buildChartData(comments: Comment[]): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
@@ -34,17 +33,6 @@ function normalizeCategory(raw: string | null | undefined): string | null {
   if (/REDE|PLATAFORMA|BUFFER|CAIU|PLAT/.test(u)) return "REDE"
   if (/\bGC\b|PLACAR/.test(u)) return "GC"
   return u
-}
-
-function timeAgo(ts: string): string {
-  try {
-    const d = new Date(ts)
-    const diffMs = Date.now() - d.getTime()
-    if (diffMs < 60_000) return "agora"
-    return "há " + formatDistanceToNowStrict(d, { locale: ptBR, addSuffix: false })
-  } catch {
-    return ""
-  }
 }
 
 const SEV_DOT: Record<string, string> = {
@@ -361,8 +349,8 @@ export default function LiveCard({
                         <span className="text-[8px] text-white/35 font-mono truncate">
                           {c.author}
                         </span>
-                        <span className="text-[8px] text-white/20 font-mono shrink-0 ml-auto" title={format(new Date(c.ts), "HH:mm:ss")}>
-                          {timeAgo(c.ts)}
+                        <span className="text-[10px] text-white/70 font-mono font-bold shrink-0 ml-auto">
+                          {format(new Date(c.ts), "HH:mm:ss")}
                         </span>
                       </div>
                       <span className={`${commentTextSize} text-white/65 break-words`}>
