@@ -30,6 +30,9 @@ dashboard/.vercel/
 .claude/
 CLAUDE.md
 
+# === SCRIPTS UTILITÁRIOS (one-time) ===
+backfill_minutes.py
+
 # === DEBUG ===
 debug_html/
 debug_logs/
