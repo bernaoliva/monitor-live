@@ -76,7 +76,8 @@ export default function HomePage() {
   const gridCols =
     active.length <= 1 ? "" :
     active.length === 2 ? "grid grid-cols-2 gap-4 items-start" :
-    "grid grid-cols-2 xl:grid-cols-3 gap-3 items-start"
+    active.length <= 6 ? "grid grid-cols-2 xl:grid-cols-3 gap-3 items-start" :
+    "grid grid-cols-2 xl:grid-cols-4 gap-3 items-start"
 
   return (
     <div className="space-y-5">

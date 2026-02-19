@@ -12,7 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-BR" className="dark">
       <body className="min-h-screen bg-bg antialiased noise-bg">
         <header className="sticky top-0 z-50 border-b border-white/[0.04] header-glow">
-          <div className="max-w-[1200px] mx-auto px-5 h-11 flex items-center justify-between">
+          <div className="max-w-[1600px] mx-auto px-5 h-11 flex items-center justify-between">
             <div className="flex items-center gap-3">
               {/* Red rec dot */}
               <div className="flex items-center gap-2">
@@ -33,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
 
-        <main className="max-w-[1200px] mx-auto px-5 py-5">
+        <main className="max-w-[1600px] mx-auto px-5 py-5">
           {children}
         </main>
       </body>
