@@ -2,7 +2,7 @@
 
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer, Legend, ReferenceDot,
 } from "recharts"
 import { ChartPoint } from "@/lib/types"
 
@@ -46,6 +46,13 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
 
   // Mostra no máximo 8 ticks no eixo X para não sobrepor labels
   const tickInterval = Math.max(1, Math.ceil(data.length / 8))
+
+  // Pontos onde houve picos de problemas técnicos (top 30% dos valores ou > 0 se poucos)
+  const techValues = data.map(d => d.technical).filter(v => v > 0)
+  const threshold = techValues.length > 5
+    ? techValues.sort((a, b) => b - a)[Math.floor(techValues.length * 0.3)] || 1
+    : 1
+  const peakPoints = data.filter(d => d.technical >= threshold)
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -99,6 +106,18 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
           fill="url(#gradTech)"
           dot={false}
         />
+        {/* Marcadores nos picos de problemas */}
+        {peakPoints.map((p) => (
+          <ReferenceDot
+            key={p.minute}
+            x={p.minute}
+            y={p.technical}
+            r={3}
+            fill="#ef4444"
+            stroke="#ef444480"
+            strokeWidth={4}
+          />
+        ))}
       </AreaChart>
     </ResponsiveContainer>
   )
