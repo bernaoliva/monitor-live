@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import Link from "next/link"
 import {
-  collection, onSnapshot, query, orderBy, where, limit,
+  collection, onSnapshot, query, orderBy, limit,
   doc, updateDoc, increment,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
@@ -111,30 +111,32 @@ export default function LiveCard({
       )
     })
 
-    // Feed: últimos 50 técnicos (mostra 5, mas precisa de margem para dismissed)
+    // Feed: últimas 200 mensagens ordenadas por ts desc, filtramos técnicos em JS
+    // (evita índice composto where+orderBy que pode não existir no Firestore)
     const qTech = query(
       collection(db, "lives", live.video_id, "comments"),
-      where("is_technical", "==", true),
       orderBy("ts", "desc"),
-      limit(50)
+      limit(200)
     )
     const unsubTech = onSnapshot(qTech, (snap) => {
       setAllTechComments(
-        snap.docs.map((d) => {
-          const raw = d.data()
-          return {
-            id:           d.id,
-            author:       raw.author       ?? "",
-            text:         raw.text         ?? "",
-            ts:           raw.ts           ?? "",
-            is_technical: raw.is_technical ?? false,
-            category:     raw.category     ?? null,
-            issue:        raw.issue        ?? null,
-            severity:     raw.severity     ?? "none",
-          } satisfies Comment
-        })
+        snap.docs
+          .map((d) => {
+            const raw = d.data()
+            return {
+              id:           d.id,
+              author:       raw.author       ?? "",
+              text:         raw.text         ?? "",
+              ts:           raw.ts           ?? "",
+              is_technical: raw.is_technical ?? false,
+              category:     raw.category     ?? null,
+              issue:        raw.issue        ?? null,
+              severity:     raw.severity     ?? "none",
+            } satisfies Comment
+          })
+          .filter((c) => c.is_technical)
       )
-    })
+    }, (err) => console.error("[LiveCard] tech feed error:", err))
 
     return () => { unsub(); unsubTech() }
   }, [live.video_id])
