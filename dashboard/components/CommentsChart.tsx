@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo, useId } from "react"
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
@@ -35,7 +36,19 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   )
 }
 
+// Dot customizado: só aparece se technical > 0
+function TechDot(props: Record<string, unknown>) {
+  const { cx, cy, payload } = props as { cx: number; cy: number; payload: ChartPoint }
+  if (!payload || payload.technical === 0) return null
+  return <circle cx={cx} cy={cy} r={2.5} fill="#ef4444" fillOpacity={0.7} />
+}
+
 export default function CommentsChart({ data, height = 220 }: { data: ChartPoint[]; height?: number }) {
+  // IDs únicos por instância do chart para evitar conflitos SVG entre cards
+  const uid = useId()
+  const gradTotalId = `gradTotal-${uid}`
+  const gradTechId  = `gradTech-${uid}`
+
   if (data.length === 0) {
     return (
       <div className="h-48 flex items-center justify-center text-white/20 text-sm">
@@ -44,18 +57,17 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
     )
   }
 
-  // Mostra no máximo 8 ticks no eixo X para não sobrepor labels
   const tickInterval = Math.max(1, Math.ceil(data.length / 8))
 
   return (
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 28 }}>
         <defs>
-          <linearGradient id="gradTotal" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradTotalId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3} />
             <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
           </linearGradient>
-          <linearGradient id="gradTech" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradTechId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.4} />
             <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
           </linearGradient>
@@ -87,8 +99,9 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
           name="Total"
           stroke="#3b82f6"
           strokeWidth={2}
-          fill="url(#gradTotal)"
+          fill={`url(#${gradTotalId})`}
           dot={false}
+          isAnimationActive={false}
         />
         <Area
           type="monotone"
@@ -96,8 +109,9 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
           name="Técnicos"
           stroke="#ef4444"
           strokeWidth={2}
-          fill="url(#gradTech)"
-          dot={false}
+          fill={`url(#${gradTechId})`}
+          dot={<TechDot />}
+          isAnimationActive={false}
         />
       </AreaChart>
     </ResponsiveContainer>
