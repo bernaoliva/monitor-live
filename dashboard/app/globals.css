@@ -163,7 +163,7 @@ body {
   100% { opacity: 0;    }
 }
 .alert-flash {
-  animation: alert-flash 2.2s ease-out forwards;
+  animation: alert-flash 4s ease-out forwards;
   pointer-events: none;
 }
 
