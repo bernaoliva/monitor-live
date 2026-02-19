@@ -15,6 +15,7 @@ import hashlib
 import signal
 import requests
 import multiprocessing as mp
+import queue as _stdlib_queue
 from multiprocessing import Process, Queue
 from threading import Thread, Lock
 from concurrent.futures import ThreadPoolExecutor
@@ -82,6 +83,11 @@ CHAT_DEDUP_WINDOW              = 5000
 SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
+
+# Batch de classificação — GPU processa até 64 textos por chamada
+BATCH_SIZE     = int(os.environ.get("BATCH_SIZE",   "64"))   # textos por request ao Cloud Run
+BATCH_MAX_WAIT = float(os.environ.get("BATCH_MAX_WAIT", "0.1"))  # s — tempo máx para montar batch
+FS_FLUSH_SECS  = float(os.environ.get("FS_FLUSH_SECS",  "3.0"))  # s — flush contadores live doc
 
 # HTTP
 HEADERS = {
@@ -801,40 +807,255 @@ def _should_skip_classify(text: str) -> bool:
     """Retorna True se o texto é obviamente não-técnico e pode pular a IA."""
     return bool(_PREFILTER_SKIP.search(text.strip()))
 
-# ─── QUEUE CONSUMER ───────────────────────────────────────────────────────────
-_classify_pool: Optional[ThreadPoolExecutor] = None
+# ─── QUEUE CONSUMER (batch GPU) ───────────────────────────────────────────────
+#
+# Arquitetura para alto volume (até 500 msg/s):
+#
+#   pytchat → multiprocessing.Queue → consumer_loop
+#                  ↓ (enqueue imediato, O(1))
+#             _batch_queue (stdlib thread-safe)
+#                  ↓ (drena a cada BATCH_MAX_WAIT s ou BATCH_SIZE itens)
+#             _batcher_loop → POST /classify/batch (GPU, até 64 textos/req)
+#                  ↓ (resultados em batch)
+#             _process_batch → Firestore WriteBatch (reduz RPCs)
+#
+# Contadores do live doc (total_comments, technical_comments, issue_counts)
+# são acumulados em memória e gravados no Firestore a cada FS_FLUSH_SECS,
+# evitando o problema de "hot document" a 500 writes/s.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_batch_queue:   Optional[_stdlib_queue.Queue] = None
+_counter_lock   = Lock()
+_pending_counts: dict = {}   # vid → {total, technical, issue_counts}
+
+
+def _accum_counter(vid: str, is_tech: bool, category, issue):
+    """Acumula contadores em memória — flush periódico via _counter_flush_loop."""
+    with _counter_lock:
+        c = _pending_counts.setdefault(vid, {"total": 0, "technical": 0, "issue_counts": {}})
+        c["total"] += 1
+        if is_tech:
+            c["technical"] += 1
+            if category and issue:
+                key = f"{category}:{issue}"
+                c["issue_counts"][key] = c["issue_counts"].get(key, 0) + 1
+
+
+def _flush_pending_counts():
+    """Grava contadores acumulados no Firestore (1 update por live em vez de 500/s)."""
+    global _pending_counts
+    with _counter_lock:
+        snapshot, _pending_counts = _pending_counts, {}
+    for vid, c in snapshot.items():
+        try:
+            fs = _get_fs()
+            if not fs:
+                continue
+            upd: dict = {
+                "total_comments":     fb_firestore.Increment(c["total"]),
+                "technical_comments": fb_firestore.Increment(c["technical"]),
+                "last_seen_at":       now_iso(),
+            }
+            for key, n in c["issue_counts"].items():
+                upd[f"issue_counts.{key}"] = fb_firestore.Increment(n)
+            fs.collection("lives").document(vid).update(upd)
+        except Exception as e:
+            _log_debug(f"[counter_flush] {vid}: {e}")
+
+
+def _counter_flush_loop():
+    """Thread daemon: flush periódico de contadores."""
+    while True:
+        time.sleep(FS_FLUSH_SECS)
+        try:
+            _flush_pending_counts()
+        except Exception as e:
+            _log_debug(f"[counter_flush_loop] {e}")
+
+
+def _process_batch(items: list):
+    """Classifica em batch via Cloud Run GPU e salva tudo via Firestore WriteBatch."""
+    if not items:
+        return
+
+    # Itens que precisam de IA vs pré-filtrados
+    ai_items  = [it for it in items if it["needs_ai"]]
+    ai_texts  = [it["text"] for it in ai_items]
+
+    # Chama /classify/batch — 1 request para N textos (GPU)
+    raw_results: list = []
+    if ai_texts and SERVING_URL:
+        try:
+            r = _cloud_session.post(
+                f"{SERVING_URL}/classify/batch",
+                json={"texts": ai_texts},
+                timeout=SERVING_TIMEOUT,
+            )
+            r.raise_for_status()
+            raw_results = r.json()
+        except Exception as e:
+            _log_debug(f"[batch_classify] erro: {e}")
+
+    # Mapeia result por comment_id
+    ai_result_map: dict = {}
+    for i, it in enumerate(ai_items):
+        ai_result_map[it["comment_id"]] = raw_results[i] if i < len(raw_results) else None
+
+    # Firestore WriteBatch — salva comment docs + minutes de uma vez
+    fs = _get_fs()
+    if not fs:
+        return
+
+    batch = fs.batch()
+    batch_ops = 0
+
+    def _maybe_commit():
+        nonlocal batch, batch_ops
+        if batch_ops >= 400:   # limite do WriteBatch é 500; margem de segurança
+            try:
+                batch.commit()
+            except Exception as e:
+                _log_debug(f"[batch_commit] erro: {e}")
+            batch = fs.batch()
+            batch_ops = 0
+
+    for it in items:
+        res = ai_result_map.get(it["comment_id"]) if it["needs_ai"] else None
+        is_tech = False
+        category, issue, severity = None, None, "none"
+
+        if res:
+            is_tech    = bool(res.get("is_technical", False))
+            confidence = float(res.get("confidence", 1.0))
+            cat_raw    = res.get("category")
+            if is_tech and confidence < CLOUD_CONFIDENCE_THRESHOLD:
+                is_tech = False
+            if is_tech and (cat_raw is None or cat_raw == "OUTRO"):
+                is_tech = False
+            if is_tech and not _has_tech_keyword(it["text"]):
+                is_tech = False
+            if is_tech:
+                category = cat_raw
+                issue    = res.get("issue")
+                sev_raw  = (res.get("severity") or "none").lower()
+                severity = sev_raw if sev_raw in ("none", "low", "medium", "high") else "none"
+            if not is_tech:
+                override = _keyword_override(it["text"])
+                if override:
+                    is_tech  = True
+                    category = override["category"]
+                    issue    = override["issue"]
+                    severity = override["severity"]
+
+        _accum_counter(it["vid"], is_tech, category, issue)
+
+        live_ref = fs.collection("lives").document(it["vid"])
+
+        # Grava comentário
+        batch.set(
+            live_ref.collection("comments").document(it["comment_id"]),
+            {
+                "author":       it["author"],
+                "text":         it["text"],
+                "ts":           it["ts"],
+                "is_technical": is_tech,
+                "category":     category if is_tech else None,
+                "issue":        issue    if is_tech else None,
+                "severity":     severity if is_tech else "none",
+            }
+        )
+        batch_ops += 1
+        _maybe_commit()
+
+        # Agrega minuto
+        ts_val    = it["ts"]
+        time_part = ts_val.split("T")[-1] if "T" in ts_val else ts_val.split(" ")[-1] if " " in ts_val else ts_val
+        minute_key = time_part[:5]
+        if minute_key and len(minute_key) == 5 and ":" in minute_key:
+            batch.set(
+                live_ref.collection("minutes").document(minute_key),
+                {
+                    "total":     fb_firestore.Increment(1),
+                    "technical": fb_firestore.Increment(1 if is_tech else 0),
+                },
+                merge=True,
+            )
+            batch_ops += 1
+            _maybe_commit()
+
+    if batch_ops > 0:
+        try:
+            batch.commit()
+        except Exception as e:
+            _log_debug(f"[batch_commit_final] erro: {e}")
+
+
+def _batcher_loop():
+    """Thread daemon: drena _batch_queue e processa em micro-batches."""
+    pending: list = []
+    last_send = time.time()
+
+    while True:
+        # Coleta até BATCH_SIZE itens ou até BATCH_MAX_WAIT segundos
+        deadline = last_send + BATCH_MAX_WAIT
+        while len(pending) < BATCH_SIZE:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            try:
+                item = _batch_queue.get(timeout=min(remaining, 0.02))
+                pending.append(item)
+            except _stdlib_queue.Empty:
+                if time.time() >= deadline:
+                    break
+
+        if pending:
+            to_send  = pending[:BATCH_SIZE]
+            pending  = pending[BATCH_SIZE:]
+            try:
+                _process_batch(to_send)
+            except Exception:
+                _log_debug(f"[batcher] error: {traceback.format_exc()}")
+
+        last_send = time.time()
+
 
 def _process_chat_item(vid: str, author: str, text: str, ts: str):
-    """Classifica e salva um comentário. Roda dentro do ThreadPoolExecutor."""
+    """Limpa, pré-filtra e enfileira no batcher (O(1), não bloqueia o consumer)."""
     try:
-        # Limpa emoji codes custom do YouTube (:nome:) antes de tudo
         text = _clean_yt_emojis(text)
         if not text:
-            return  # mensagem era só emojis custom — ignora
+            return
 
         comment_id = hashlib.sha1(
             f"{author}{ts}{text}".encode("utf-8", errors="ignore")
         ).hexdigest()[:16]
 
-        # Pré-filtro: mensagens óbvias não vão para IA
-        if _should_skip_classify(text):
-            fs_add_comment(vid, comment_id, author, text, ts, False, None, None, "none")
-            return
+        needs_ai = not _should_skip_classify(text)
 
-        verdict   = classify(text)
-        is_tech   = bool(verdict and verdict.get("is_technical", False))
-        fs_add_comment(
-            vid, comment_id, author, text, ts, is_tech,
-            verdict.get("category") if verdict else None,
-            verdict.get("issue")    if verdict else None,
-            (verdict.get("severity") or "none") if verdict else "none",
-        )
+        try:
+            _batch_queue.put_nowait({
+                "vid":        vid,
+                "comment_id": comment_id,
+                "author":     author,
+                "text":       text,
+                "ts":         ts,
+                "needs_ai":   needs_ai,
+            })
+        except _stdlib_queue.Full:
+            _log_debug(f"[batcher] fila cheia — descartando msg de {vid}")
+
     except Exception:
-        _log_debug(f"_process_chat_item error: {traceback.format_exc()}")
+        _log_debug(f"[_process_chat_item] error: {traceback.format_exc()}")
+
 
 def queue_consumer_loop(q: Queue):
-    global _classify_pool
-    _classify_pool = ThreadPoolExecutor(max_workers=LLM_WORKERS, thread_name_prefix="classify")
+    global _batch_queue
+    _batch_queue = _stdlib_queue.Queue(maxsize=200_000)
+
+    Thread(target=_batcher_loop,       daemon=True, name="batcher").start()
+    Thread(target=_counter_flush_loop, daemon=True, name="counter_flush").start()
+    _log_debug(f"[consumer] batch_size={BATCH_SIZE} max_wait={BATCH_MAX_WAIT}s flush={FS_FLUSH_SECS}s")
 
     while True:
         try:
@@ -865,8 +1086,7 @@ def queue_consumer_loop(q: Queue):
                 author = item.get("author", "-")
                 text   = item.get("message", "")
                 ts     = item.get("ts", now_iso())
-                # Despacha para o pool — não bloqueia o dispatcher
-                _classify_pool.submit(_process_chat_item, vid, author, text, ts)
+                _process_chat_item(vid, author, text, ts)
 
             elif t == "ended":
                 fs_mark_live_ended(item["video_id"])
