@@ -256,7 +256,7 @@ export default function LiveCard({
       </div>
 
       {/* Stats strip */}
-      <div className="grid grid-cols-4 border-y border-white/[0.06]">
+      <div className="grid grid-cols-3 border-y border-white/[0.06]">
         <div className="px-3 py-2.5">
           <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Msgs</p>
           <p className="font-data text-base font-black text-white">
@@ -269,14 +269,6 @@ export default function LiveCard({
             techRate > 15 ? "text-red-400" : techRate > 5 ? "text-amber-400" : "text-emerald-400"
           }`}>
             {totalTechCount.toLocaleString()}
-          </p>
-        </div>
-        <div className="px-3 py-2.5 border-l border-white/[0.06]">
-          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Taxa</p>
-          <p className={`font-data text-base font-black ${
-            techRate > 15 ? "text-red-400" : techRate > 5 ? "text-amber-400" : "text-emerald-400"
-          }`}>
-            {techRate}%
           </p>
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
@@ -334,7 +326,7 @@ export default function LiveCard({
                           {format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}
                         </span>
                       </div>
-                      <span className={`${commentTextSize} text-white/65 break-words`}>
+                      <span className={`${commentTextSize} text-white/65 break-words leading-tight -mt-px block`}>
                         {c.text}
                       </span>
                     </div>
