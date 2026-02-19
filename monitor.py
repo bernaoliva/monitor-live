@@ -505,6 +505,18 @@ _KEYWORD_FALLBACK = [
                                                                             "AUDIO", "qualidade_audio",  "medium"),
     (re.compile(r"\b(?:som|audio|áudio)\s+(?:ruim|horrivel|horrível|péssim|pessim)\b", re.I),
                                                                             "AUDIO", "qualidade_audio",  "medium"),
+    # Vazamento de áudio: outro canal / outro áudio entrando na transmissão
+    (re.compile(
+        r"(?:"
+        r"vaz(?:and|ou|amento)\s+(?:de\s+)?(?:audio|áudio|som)"   # vazando/vazou/vazamento de áudio
+        r"|(?:audio|áudio|som)\s+vaz(?:and|ou)"                    # áudio vazando/vazou
+        r"|entrou\s+(?:outro\s+)?(?:audio|áudio|som)"              # entrou outro áudio
+        r"|(?:audio|áudio|som)\s+(?:de\s+outro|errad|trocad)"      # áudio de outro/errado/trocado
+        r"|trocou\s+(?:o\s+)?(?:audio|áudio|som)"                  # trocou o áudio
+        r"|(?:outro\s+)?(?:audio|áudio|som)\s+(?:entrando|tocando)"# outro áudio entrando/tocando
+        r"|passando\s+(?:audio|áudio|som)\s+(?:de\s+outro|errad)"  # passando áudio de outro
+        r")",
+        re.I),                                                              "AUDIO", "vazamento_audio",  "high"),
     (re.compile(r"\b(?:tela\s+preta|tela\s+escura|sem\s+(?:video|vídeo|imagem))\b", re.I),
                                                                             "VIDEO", "tela_preta",       "high"),
     (re.compile(r"\b(?:travand|pixelan|imagem\s+ruim|imagem\s+borrad)", re.I),
@@ -535,6 +547,7 @@ _TECH_KEYWORDS = re.compile(
     r"|\bpreta\b|\bescura\b|\bborrad|\bpixelad"                 # visual
     r"|\bplacar\b|\bgc\b"                                       # GC
     r"|\bmudo|\bmuta|\bdessincroni|\batraso|\badianta|\bdelay"   # sincronia
+    r"|\bvazand|\bvazou\b|\bvazamento"                          # vazamento de áudio
     r")",
     re.I,
 )
