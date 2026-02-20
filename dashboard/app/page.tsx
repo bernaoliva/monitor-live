@@ -47,6 +47,8 @@ export default function HomePage() {
             total_comments:     d.total_comments     ?? 0,
             technical_comments: d.technical_comments ?? 0,
             issue_counts:       d.issue_counts       ?? {},
+            concurrent_viewers: d.concurrent_viewers ?? null,
+            gpu_active:         d.gpu_active         ?? false,
           } satisfies Live
         })
 

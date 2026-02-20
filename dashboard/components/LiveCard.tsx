@@ -9,7 +9,7 @@ import {
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
-import { ExternalLink, AlertTriangle, ArrowRight, X } from "lucide-react"
+import { Youtube, AlertTriangle, ArrowRight, X } from "lucide-react"
 import { format } from "date-fns"
 
 
@@ -60,7 +60,17 @@ export default function LiveCard({
   const [allTechComments, setAllTechComments] = useState<Comment[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [alertKey, setAlertKey] = useState(0)
-  const prevTechCountRef = useRef(0)
+  const techSnapshotReadyRef = useRef(false)
+
+  const minuteKeyFromTs = (ts: string): string | null => {
+    try {
+      const dt = new Date(ts.includes("T") ? ts : ts.replace(" ", "T"))
+      if (Number.isNaN(dt.getTime())) return null
+      return format(dt, "HH:mm")
+    } catch {
+      return null
+    }
+  }
 
   // Carrega dismissed do localStorage ao montar
   useEffect(() => {
@@ -72,6 +82,18 @@ export default function LiveCard({
 
   // Descarta localmente + persiste no localStorage + marca como não-técnico no Firestore
   const dismissComment = async (c: Comment) => {
+    const minuteKey = minuteKeyFromTs(c.ts)
+
+    if (minuteKey) {
+      setChartData((prev) =>
+        prev.map((p) =>
+          p.minute === minuteKey
+            ? { ...p, technical: Math.max(0, (p.technical ?? 0) - 1) }
+            : p
+        )
+      )
+    }
+
     setDismissed(prev => {
       const next = new Set([...prev, c.id])
       try { localStorage.setItem(`dismissed_${live.video_id}`, JSON.stringify([...next])) } catch {}
@@ -88,6 +110,12 @@ export default function LiveCard({
         liveUpdate[`issue_counts.${c.category}:${c.issue}`] = increment(-1)
       }
       await updateDoc(doc(db, "lives", live.video_id), liveUpdate)
+      if (minuteKey) {
+        await updateDoc(
+          doc(db, "lives", live.video_id, "minutes", minuteKey),
+          { technical: increment(-1) }
+        )
+      }
     } catch (e) {
       console.error("Erro ao descartar comentário:", e)
     }
@@ -115,11 +143,13 @@ export default function LiveCard({
     })
 
     // Feed: todos os técnicos — igual ao detail page (where sem orderBy, sem índice composto)
+    techSnapshotReadyRef.current = false
     const qTech = query(
       collection(db, "lives", live.video_id, "comments"),
       where("is_technical", "==", true)
     )
     const unsubTech = onSnapshot(qTech, (snap) => {
+      const hasNewTech = techSnapshotReadyRef.current && snap.docChanges().some((ch) => ch.type === "added")
       setAllTechComments(
         snap.docs
           .map((d) => {
@@ -136,6 +166,10 @@ export default function LiveCard({
             } satisfies Comment
           })
       )
+      if (hasNewTech) {
+        setAlertKey((k) => k + 1)
+      }
+      techSnapshotReadyRef.current = true
     }, (err) => console.error("[LiveCard] tech feed error:", err))
 
     return () => { unsub(); unsubTech() }
@@ -149,19 +183,26 @@ export default function LiveCard({
     [allTechComments, dismissed]
   )
 
-  // Alerta flash quando surge novo problema técnico
-  useEffect(() => {
-    const currentCount = visibleComments.length
-    if (prevTechCountRef.current > 0 && currentCount > prevTechCountRef.current) {
-      setAlertKey(k => k + 1)
+  const chartDataDisplay = useMemo(() => {
+    const techByMinute: Record<string, number> = {}
+    for (const c of visibleComments) {
+      const mk = minuteKeyFromTs(c.ts)
+      if (!mk) continue
+      techByMinute[mk] = (techByMinute[mk] ?? 0) + 1
     }
-    prevTechCountRef.current = currentCount
-  }, [visibleComments.length])
+    return chartData
+      .map((p) => ({
+        ...p,
+        technical: techByMinute[p.minute] ?? 0,
+      }))
+      .sort((a, b) => a.minute.localeCompare(b.minute))
+  }, [chartData, visibleComments])
 
+  // Alerta flash quando surge novo problema técnico
   const lastFiveComments = visibleComments
 
   // Usa contadores do documento live (não dos comentários limitados)
-  const totalTechCount = live.technical_comments ?? 0
+  const totalTechCount = visibleComments.length
   const techRate = Math.round(
     (totalTechCount / Math.max(live.total_comments, 1)) * 100
   )
@@ -233,18 +274,20 @@ export default function LiveCard({
           <h3 className="font-bold text-white text-sm leading-snug line-clamp-2 pr-4">
             {live.title || live.video_id}
           </h3>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 pt-0.5">
           {live.url && (
             <a
               href={live.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-white/30 hover:text-white/60 transition-colors"
+              className="inline-flex items-center gap-1.5 text-[10px] font-bold font-mono text-red-400/80 hover:text-red-300 transition-colors w-fit"
+              title="Abrir live no YouTube"
             >
-              <ExternalLink size={12} />
+              <Youtube size={12} />
+              YOUTUBE
             </a>
           )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0 pt-0.5">
           <Link
             href={`/live/${live.video_id}`}
             className="flex items-center gap-1 text-[10px] font-bold font-mono text-white/35 hover:text-white/65 transition-colors"
@@ -301,7 +344,7 @@ export default function LiveCard({
 
       {/* Chart */}
       <div className="px-4 pt-1 pb-0">
-        <CommentsChart data={chartData} height={200} showLegend={false} />
+        <CommentsChart data={chartDataDisplay} height={200} showLegend={false} />
       </div>
 
       {/* Abaixo do gráfico: comentários (2/3) + categorias (1/3) */}

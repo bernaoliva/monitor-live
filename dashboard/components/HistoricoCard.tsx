@@ -12,7 +12,7 @@ import { format } from "date-fns"
 function buildChartData(comments: Comment[]): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
   comments.forEach((c) => {
-    const minute = format(new Date(c.ts), "HH:mm")
+    const minute = format(new Date(c.ts.replace(" ", "T")), "HH:mm")
     if (!buckets[minute]) buckets[minute] = { total: 0, technical: 0 }
     buckets[minute].total++
     if (c.is_technical) buckets[minute].technical++
@@ -122,6 +122,17 @@ export default function HistoricoCard({ live }: { live: Live }) {
           <h3 className="font-bold text-white/80 text-sm leading-snug line-clamp-2 pr-4">
             {live.title || live.video_id}
           </h3>
+          {live.title_history && live.title_history.length > 1 && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {live.title_history
+                .filter((t) => t !== live.title)
+                .map((t, i) => (
+                  <span key={i} className="text-[9px] text-white/25 font-mono bg-white/[0.03] border border-white/[0.06] rounded px-1.5 py-0.5 line-clamp-1 max-w-[200px]">
+                    {t}
+                  </span>
+                ))}
+            </div>
+          )}
         </div>
         <Link
           href={`/live/${live.video_id}`}
