@@ -36,18 +36,18 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   )
 }
 
-// Dot customizado: só aparece se technical > 0
 function TechDot(props: Record<string, unknown>) {
   const { cx, cy, payload } = props as { cx: number; cy: number; payload: ChartPoint }
   if (!payload || payload.technical === 0) return null
-  return <circle cx={cx} cy={cy} r={2.5} fill="#ef4444" fillOpacity={0.7} />
+  return <circle cx={cx} cy={cy} r={3.5} fill="#ef4444" fillOpacity={0.85} stroke="#fff" strokeWidth={1} strokeOpacity={0.3} />
 }
 
-export default function CommentsChart({ data, height = 220 }: { data: ChartPoint[]; height?: number }) {
+export default function CommentsChart({ data, height = 220, showLegend = true }: { data: ChartPoint[]; height?: number; showLegend?: boolean }) {
   // IDs únicos por instância do chart para evitar conflitos SVG entre cards
   const uid = useId()
   const gradTotalId = `gradTotal-${uid}`
   const gradTechId  = `gradTech-${uid}`
+
 
   if (data.length === 0) {
     return (
@@ -61,7 +61,7 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 28 }}>
+      <AreaChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: showLegend ? 28 : 12 }}>
         <defs>
           <linearGradient id={gradTotalId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3} />
@@ -90,9 +90,9 @@ export default function CommentsChart({ data, height = 220 }: { data: ChartPoint
           allowDecimals={false}
         />
         <Tooltip content={<CustomTooltip />} />
-        <Legend
-          wrapperStyle={{ paddingTop: 16, fontSize: 12, color: "rgba(255,255,255,0.4)" }}
-        />
+        {showLegend && (
+          <Legend wrapperStyle={{ paddingTop: 16, fontSize: 12, color: "rgba(255,255,255,0.4)" }} />
+        )}
         <Area
           type="monotone"
           dataKey="total"
