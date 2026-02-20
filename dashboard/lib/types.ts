@@ -12,6 +12,8 @@ export interface Live {
   total_comments: number
   technical_comments: number
   issue_counts: Record<string, number>
+  concurrent_viewers?: number
+  gpu_active?: boolean
 }
 
 export interface Comment {

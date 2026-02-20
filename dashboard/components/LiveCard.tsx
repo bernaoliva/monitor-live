@@ -158,11 +158,7 @@ export default function LiveCard({
     prevTechCountRef.current = currentCount
   }, [visibleComments.length])
 
-  const lastFiveComments = visibleComments.slice(0, 5)
-
-  const n = lastFiveComments.length
-  const commentTextSize = n <= 2 ? "text-[11px]" : n === 3 ? "text-[10px]" : "text-[9px]"
-  const commentPadding  = n <= 2 ? "py-2.5"      : n === 3 ? "py-2"        : "py-1.5"
+  const lastFiveComments = visibleComments
 
   // Usa contadores do documento live (não dos comentários limitados)
   const totalTechCount = live.technical_comments ?? 0
@@ -228,6 +224,11 @@ export default function LiveCard({
             <span className="tag bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
               AO VIVO
             </span>
+            {live.gpu_active && (
+              <span className="tag bg-violet-500/20 text-violet-300 border border-violet-500/30">
+                GPU
+              </span>
+            )}
           </div>
           <h3 className="font-bold text-white text-sm leading-snug line-clamp-2 pr-4">
             {live.title || live.video_id}
@@ -263,7 +264,7 @@ export default function LiveCard({
       </div>
 
       {/* Stats strip */}
-      <div className="grid grid-cols-3 border-y border-white/[0.06]">
+      <div className="grid grid-cols-4 border-y border-white/[0.06]">
         <div className="px-3 py-2.5">
           <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Msgs</p>
           <p className="font-data text-base font-black text-white">
@@ -279,6 +280,18 @@ export default function LiveCard({
           </p>
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
+          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Audiência</p>
+          <p className="font-data text-base font-black text-white/80">
+            {live.concurrent_viewers != null
+              ? live.concurrent_viewers >= 1_000_000
+                ? `${(live.concurrent_viewers / 1_000_000).toFixed(1)}M`
+                : live.concurrent_viewers >= 1_000
+                ? `${(live.concurrent_viewers / 1_000).toFixed(0)}k`
+                : live.concurrent_viewers.toString()
+              : "—"}
+          </p>
+        </div>
+        <div className="px-3 py-2.5 border-l border-white/[0.06]">
           <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Categorias</p>
           <p className="font-data text-base font-black text-white/60">
             {categoryBreakdown.length}
@@ -287,8 +300,8 @@ export default function LiveCard({
       </div>
 
       {/* Chart */}
-      <div className="px-4 pt-3 pb-1">
-        <CommentsChart data={chartData} height={220} />
+      <div className="px-4 pt-1 pb-0">
+        <CommentsChart data={chartData} height={200} showLegend={false} />
       </div>
 
       {/* Abaixo do gráfico: comentários (2/3) + categorias (1/3) */}
@@ -303,7 +316,7 @@ export default function LiveCard({
             </span>
             <span className="font-data text-[9px] text-white/30 ml-auto">{visibleComments.length}</span>
           </div>
-          <div className="h-[130px] overflow-hidden flex flex-col justify-start">
+          <div className="max-h-[200px] overflow-y-scroll flex flex-col justify-start comments-scroll">
             {visibleComments.length === 0 ? (
               <div className="px-3 py-4 text-[10px] text-white/25 font-mono">
                 Nenhum problema detectado
@@ -315,7 +328,7 @@ export default function LiveCard({
                 return (
                   <div
                     key={c.id}
-                    className={`relative group flex items-start gap-2 px-3 ${commentPadding} border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors`}
+                    className={`relative group flex items-start gap-2 px-3 py-1.5 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors`}
                   >
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
                     <span className={`block w-1.5 h-1.5 rounded-full shrink-0 mt-1 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
@@ -333,7 +346,7 @@ export default function LiveCard({
                           {format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}
                         </span>
                       </div>
-                      <span className={`${commentTextSize} text-white/65 break-words leading-tight -mt-px block`}>
+                      <span className="text-[11px] text-white/65 break-words leading-tight -mt-px block">
                         {c.text}
                       </span>
                     </div>
