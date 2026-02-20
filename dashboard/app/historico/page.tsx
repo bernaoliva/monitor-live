@@ -27,9 +27,11 @@ export default function HistoricoPage() {
             total_comments:     d.total_comments     ?? 0,
             technical_comments: d.technical_comments ?? 0,
             issue_counts:       d.issue_counts       ?? {},
+            title_history:      d.title_history      ?? [],
           } satisfies Live
         })
-        .filter((l) => l.status === "ended")
+        // Fallback: alguns docs antigos podem ter ended_at preenchido com status inconsistente.
+        .filter((l) => l.status === "ended" || !!l.ended_at)
         .sort((a, b) => {
           const aTime = a.ended_at ?? a.started_at ?? ""
           const bTime = b.ended_at ?? b.started_at ?? ""

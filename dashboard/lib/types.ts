@@ -14,6 +14,7 @@ export interface Live {
   issue_counts: Record<string, number>
   concurrent_viewers?: number
   gpu_active?: boolean
+  title_history?: string[]
 }
 
 export interface Comment {

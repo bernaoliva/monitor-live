@@ -16,7 +16,7 @@ import { ptBR } from "date-fns/locale"
 function buildChartData(comments: Comment[], dismissed: Set<string>): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
   comments.forEach((c) => {
-    const minute = format(new Date(c.ts), "HH:mm")
+    const minute = format(new Date(c.ts.replace(" ", "T")), "HH:mm")
     if (!buckets[minute]) buckets[minute] = { total: 0, technical: 0 }
     buckets[minute].total++
     if (c.is_technical && !dismissed.has(c.id)) buckets[minute].technical++
@@ -24,6 +24,16 @@ function buildChartData(comments: Comment[], dismissed: Set<string>): ChartPoint
   return Object.entries(buckets)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([minute, v]) => ({ minute, ...v }))
+}
+
+function minuteKeyFromTs(ts: string): string | null {
+  try {
+    const dt = new Date(ts.includes("T") ? ts : ts.replace(" ", "T"))
+    if (Number.isNaN(dt.getTime())) return null
+    return format(dt, "HH:mm")
+  } catch {
+    return null
+  }
 }
 
 function normalizeCategory(raw: string | null | undefined): string | null {
@@ -69,6 +79,8 @@ export default function LivePage() {
   }, [id])
 
   const dismissComment = async (c: Comment) => {
+    const minuteKey = minuteKeyFromTs(c.ts)
+
     setDismissed(prev => {
       const next = new Set([...prev, c.id])
       try { localStorage.setItem(`dismissed_${id}`, JSON.stringify([...next])) } catch {}
@@ -85,6 +97,12 @@ export default function LivePage() {
         liveUpdate[`issue_counts.${c.category}:${c.issue}`] = increment(-1)
       }
       await updateDoc(doc(db, "lives", id), liveUpdate)
+      if (minuteKey) {
+        await updateDoc(
+          doc(db, "lives", id, "minutes", minuteKey),
+          { technical: increment(-1) }
+        )
+      }
     } catch (e) {
       console.error("Erro ao descartar comentário:", e)
     }

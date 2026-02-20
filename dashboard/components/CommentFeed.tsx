@@ -81,7 +81,7 @@ export default function CommentFeed({
                   {c.author}
                 </span>
                 <span className="text-[10px] text-white/30 font-mono shrink-0">
-                  {format(new Date(c.ts), "HH:mm:ss")}
+                  {format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}
                 </span>
                 {c.is_technical && c.severity && c.severity !== "none" && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${SEVERITY_BADGE[c.severity] ?? ""}`}>
