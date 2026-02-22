@@ -1,7 +1,7 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-Monitor de Lives YouTube â€” CazÃ©TV
-Coleta chat â†’ classifica via Cloud Run (DistilBERT) â†’ grava no Firestore
+Monitor de Lives YouTube — CazéTV
+Coleta chat → classifica via Cloud Run (DistilBERT) → grava no Firestore
 Dashboard: Vercel (Next.js)
 """
 
@@ -10,17 +10,20 @@ import re
 import json
 import time
 import traceback
+import functools
 import hashlib
 import signal
 import requests
+import multiprocessing as mp
 import queue as _stdlib_queue
-from threading import Thread, Lock, Event
+from multiprocessing import Process, Queue
+from threading import Thread, Lock
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Optional, Set
 from collections import deque
 
-# Firestore â€” ativa se FIREBASE_CREDENTIALS estiver definido
+# Firestore — ativa se FIREBASE_CREDENTIALS estiver definido
 try:
     import firebase_admin
     from firebase_admin import credentials as fb_credentials, firestore as fb_firestore
@@ -49,13 +52,13 @@ except ImportError:
 
 import pytchat
 
-# â”€â”€â”€ CONSTANTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── CONSTANTS ───────────────────────────────────────────────────────────────
 MAX_COMMENT_LENGTH = 5000
 OEMBED_CACHE_TTL   = 300
 
-# â”€â”€â”€ CONFIG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── CONFIG ──────────────────────────────────────────────────────────────────
 CHANNELS = [
-    {"display": "CAZETV", "name": "CazÃ©TV", "handle": "@CazeTV", "channel_id": ""},
+    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": ""},
 ]
 
 SUPERVISOR_POLL_SECONDS        = 8
@@ -77,20 +80,15 @@ CHAT_IDLE_RECREATE_SECONDS     = 20
 CHAT_HARD_WATCHDOG_SECONDS     = 45
 CHAT_DEDUP_WINDOW              = 5000
 
-# IA â€” Cloud Run (DistilBERT fine-tuned)
+# IA — Cloud Run (DistilBERT fine-tuned)
 SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
 
-# Batch de classificaÃ§Ã£o â€” GPU processa atÃ© 64 textos por chamada
+# Batch de classificação — GPU processa até 64 textos por chamada
 BATCH_SIZE     = int(os.environ.get("BATCH_SIZE",   "64"))   # textos por request ao Cloud Run
-BATCH_MAX_WAIT = float(os.environ.get("BATCH_MAX_WAIT", "0.1"))  # s â€” tempo mÃ¡x para montar batch
-FS_FLUSH_SECS  = float(os.environ.get("FS_FLUSH_SECS",  "3.0"))  # s â€” flush contadores live doc
-
-# AudiÃªncia â€” YouTube Data API v3
-YOUTUBE_API_KEY      = os.environ.get("YOUTUBE_API_KEY", "SUA_YOUTUBE_API_KEY")
-GPU_VIEWER_THRESHOLD = int(os.environ.get("GPU_VIEWER_THRESHOLD", "270000"))
-VIEWER_POLL_SECS     = int(os.environ.get("VIEWER_POLL_SECS", "60"))
+BATCH_MAX_WAIT = float(os.environ.get("BATCH_MAX_WAIT", "0.1"))  # s — tempo máx para montar batch
+FS_FLUSH_SECS  = float(os.environ.get("FS_FLUSH_SECS",  "3.0"))  # s — flush contadores live doc
 
 # HTTP
 HEADERS = {
@@ -114,18 +112,15 @@ for k, v in COOKIE_CONSENT.items():
 
 DEFAULT_PARAMS = {"hl": "pt-BR", "gl": "BR"}
 
-_oembed_cache: Dict[str, Tuple[float, str]] = {}
-_oembed_lock = Lock()
-
-# API v3 search cache — evita estourar quota (100 units/call, 10k/dia)
-_api_cache: Dict[str, Tuple[float, List[Tuple[str, str]]]] = {}  # channel_id → (ts, results)
+# API v3 search cache
+_api_cache: Dict[str, Tuple[float, List[Tuple[str, str]]]] = {}
 API_CACHE_TTL = 60  # segundos
 
-# Chat-aware miss tolerance — rastreia última msg recebida por live
-_last_chat_msg_ts: Dict[str, float] = {}  # video_id → timestamp da última msg
-CHAT_ALIVE_GRACE = 30  # se recebeu msg nos últimos 30s, live está ativa
+# Chat-aware miss tolerance
+_last_chat_msg_ts: Dict[str, float] = {}  # video_id -> timestamp da ultima msg
+CHAT_ALIVE_GRACE = 30  # se recebeu msg nos ultimos 30s, live esta ativa
 
-# â”€â”€â”€ LOGGING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── LOGGING ─────────────────────────────────────────────────────────────────
 os.makedirs("debug_logs", exist_ok=True)
 
 def _log_debug(msg: str):
@@ -135,37 +130,21 @@ def _log_debug(msg: str):
     with open(os.path.join("debug_logs", f"debug_{datetime.now().strftime('%Y%m%d')}.log"), "a", encoding="utf-8") as f:
         f.write(log_msg + "\n")
 
-# â”€â”€â”€ FIRESTORE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── FIRESTORE ───────────────────────────────────────────────────────────────
 def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: str = "active"):
     if not FIRESTORE_ENABLED: return
     try:
         fs = _get_fs()
         if not fs: return
         fs.collection("lives").document(video_id).set({
-            "channel":       channel,
-            "title":         title,
-            "url":           url,
-            "status":        status,
-            "last_seen_at":  now_iso(),
-            "title_history": fb_firestore.ArrayUnion([title]),
-        }, merge=True)
-    except Exception as e:
-        _log_debug(f"[Firestore] fs_upsert_live error: {e}")
-
-def fs_touch_live(video_id: str, channel: str, url: str, status: str = "active"):
-    """Atualiza heartbeat da live sem sobrescrever titulo."""
-    if not FIRESTORE_ENABLED: return
-    try:
-        fs = _get_fs()
-        if not fs: return
-        fs.collection("lives").document(video_id).set({
             "channel":      channel,
+            "title":        title,
             "url":          url,
             "status":       status,
             "last_seen_at": now_iso(),
         }, merge=True)
     except Exception as e:
-        _log_debug(f"[Firestore] fs_touch_live error: {e}")
+        _log_debug(f"[Firestore] fs_upsert_live error: {e}")
 
 def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
                    ts: str, is_technical: bool, category, issue, severity: str):
@@ -174,7 +153,7 @@ def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
         fs = _get_fs()
         if not fs: return
         live_ref = fs.collection("lives").document(video_id)
-        # Salva todos os comentÃ¡rios (tÃ©cnicos e normais) para o feed completo
+        # Salva todos os comentários (técnicos e normais) para o feed completo
         live_ref.collection("comments").document(comment_id).set({
             "author":       author,
             "text":         text,
@@ -184,16 +163,16 @@ def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
             "issue":        issue    if is_technical else None,
             "severity":     severity if is_technical else "none",
         })
-        # Incrementa contadores para todos os comentÃ¡rios
+        # Incrementa contadores para todos os comentários
         live_ref.update({
             "total_comments":     fb_firestore.Increment(1),
             "technical_comments": fb_firestore.Increment(1 if is_technical else 0),
             **({"issue_counts": {f"{category}:{issue}": fb_firestore.Increment(1)}}
                if is_technical and category and issue else {}),
         })
-        # Agrega por minuto para o grÃ¡fico (evita o browser baixar todos os comentÃ¡rios)
+        # Agrega por minuto para o gráfico (evita o browser baixar todos os comentários)
         try:
-            # Extrai HH:mm de qualquer formato: ISO (2026-02-19T18:57:29) ou espaÃ§o (2026-02-19 18:57:29)
+            # Extrai HH:mm de qualquer formato: ISO (2026-02-19T18:57:29) ou espaço (2026-02-19 18:57:29)
             time_part = ts.split("T")[-1] if "T" in ts else ts.split(" ")[-1] if " " in ts else ts
             minute_key = time_part[:5]  # HH:mm
             if minute_key and len(minute_key) == 5:
@@ -202,7 +181,7 @@ def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
                     "technical": fb_firestore.Increment(1 if is_technical else 0),
                 }, merge=True)
         except Exception:
-            pass  # nÃ£o falha se agregar der erro
+            pass  # não falha se agregar der erro
     except Exception as e:
         _log_debug(f"[Firestore] fs_add_comment error: {e}")
 
@@ -218,24 +197,24 @@ def fs_mark_live_ended(video_id: str):
     except Exception as e:
         _log_debug(f"[Firestore] fs_mark_live_ended error: {e}")
 
-# â”€â”€â”€ ESTADO (apenas controle de processos) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-running_monitors:    Dict[Tuple[str, str], Thread] = {}
-_stop_events:        Dict[Tuple[str, str], Event]  = {}
-last_start_attempt:  Dict[Tuple[str, str], float]  = {}
-active_videos:       Dict[str, Set[str]]            = {}  # channel_display â†’ video_ids ativos
+# ─── ESTADO (apenas controle de processos) ───────────────────────────────────
+running_monitors:    Dict[Tuple[str, str], Process] = {}
+last_start_attempt:  Dict[Tuple[str, str], float]   = {}
+active_videos:       Dict[str, Set[str]]             = {}  # channel_display → video_ids ativos
 state_lock = Lock()
 
 def stop_monitor(channel_display: str, video_id: str):
-    """Sinaliza parada do thread de chat daquela live e remove do dict."""
+    """Encerra o processo de chat daquela live e remove do dict."""
     key = (channel_display, video_id)
-    ev = _stop_events.pop(key, None)
-    if ev:
-        ev.set()
-    thr = running_monitors.pop(key, None)
-    if thr and thr.is_alive():
-        thr.join(timeout=5)
+    proc = running_monitors.get(key)
+    if proc and proc.is_alive():
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    running_monitors.pop(key, None)
 
-# â”€â”€â”€ UTILS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── UTILS ───────────────────────────────────────────────────────────────────
 def now_iso() -> str:
     br_tz = timezone(timedelta(hours=-3))
     return datetime.now(br_tz).isoformat()
@@ -256,12 +235,8 @@ def safe_get(url: str, params: Optional[dict] = None, timeout: int = SCRAPE_TIME
         _log_debug(f"safe_get error for {url}: {e}")
         return None
 
+@functools.lru_cache(maxsize=64)
 def oembed_title(video_id: str) -> str:
-    now_ts = time.time()
-    with _oembed_lock:
-        cached = _oembed_cache.get(video_id)
-        if cached and (now_ts - cached[0]) < OEMBED_CACHE_TTL:
-            return cached[1]
     try:
         o = SESSION.get(
             "https://www.youtube.com/oembed",
@@ -269,17 +244,12 @@ def oembed_title(video_id: str) -> str:
             timeout=6,
         )
         if o.status_code == 200:
-            title = o.json().get("title", video_id)
-            with _oembed_lock:
-                _oembed_cache[video_id] = (now_ts, title)
-            return title
+            return o.json().get("title", video_id)
     except Exception:
         pass
-    with _oembed_lock:
-        _oembed_cache[video_id] = (now_ts, video_id)
     return video_id
 
-# â”€â”€â”€ LIVE DISCOVERY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── LIVE DISCOVERY ──────────────────────────────────────────────────────────
 def resolve_channel_id_by_handle(handle: str) -> str:
     """Resolve o channel_id (UC...) a partir do @handle."""
     h = (handle or "").strip().lstrip("@")
@@ -301,7 +271,7 @@ def resolve_channel_id_by_handle(handle: str) -> str:
             m = re.search(pat, html)
             if m:
                 return m.group(1)
-    _log_debug(f"[resolve_channel_id_by_handle] nÃ£o achou UC para @{h} â€” tentativas: {tried}")
+    _log_debug(f"[resolve_channel_id_by_handle] não achou UC para @{h} — tentativas: {tried}")
     return ""
 
 def extract_json_blob(html, patterns):
@@ -322,7 +292,7 @@ def extract_json_blob(html, patterns):
     return None
 
 def is_live_now(video_id: str):
-    """Verifica se um video_id estÃ¡ AO VIVO. Retorna (bool_is_live, title)."""
+    """Verifica se um video_id está AO VIVO. Retorna (bool_is_live, title)."""
     html = safe_get("https://www.youtube.com/watch", params={"v": video_id}, timeout=WATCH_VERIFY_TIMEOUT)
     if not html:
         return (False, None)
@@ -348,7 +318,7 @@ def is_live_now(video_id: str):
     if player:
         title = jget(player, ["videoDetails", "title"], None)
 
-        # Descarta de imediato qualquer live ainda nÃ£o iniciada
+        # Descarta de imediato qualquer live ainda não iniciada
         is_upcoming  = jget(player, ["videoDetails", "isUpcoming"], False) is True
         pb_status    = jget(player, ["playabilityStatus", "status"], "") or ""
         upcoming_evt = jget(
@@ -368,13 +338,13 @@ def is_live_now(video_id: str):
     s = html.lower()
     negatives = (
         "assistir novamente", "watch again", "estreia", "premiere",
-        "melhores momentos", "highlights", "will begin", "vai comeÃ§ar",
+        "melhores momentos", "highlights", "will begin", "vai começar",
         "em breve", "aguardando", "scheduled for", "live_stream_offline",
         '"isupcoming":true', '"isupcoming": true',
     )
     if any(n in s for n in negatives):
         return (False, title)
-    # "ao vivo" removido dos positivos â€” aparece tambÃ©m em pÃ¡ginas de lives agendadas
+    # "ao vivo" removido dos positivos — aparece também em páginas de lives agendadas
     positives = ('"islivebroadcast":true', '"islivenow":true', 'badge_style_type_live_now', 'live now')
     if any(p in s for p in positives):
         return (True, title)
@@ -395,7 +365,11 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
         ],
     )
     if not isinstance(data, dict):
-        return _extract_live_video_ids_from_html_loose(html)
+        for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', html):
+            vid = m.group(1)
+            if vid not in out:
+                out.append(vid)
+        return out
 
     def walk(obj):
         if isinstance(obj, dict):
@@ -407,20 +381,13 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
                 is_live = False
                 for ov in vr.get("thumbnailOverlays", []) or []:
                     tsr = ov.get("thumbnailOverlayTimeStatusRenderer") or {}
-                    style = (tsr.get("style") or "").upper()
-                    txt_obj = tsr.get("text") or {}
-                    txt_simple = (txt_obj.get("simpleText") or "")
-                    txt_runs = " ".join([str(r.get("text", "")) for r in (txt_obj.get("runs") or []) if isinstance(r, dict)])
-                    txt = f"{txt_simple} {txt_runs}".upper()
-                    if ("LIVE" in style) or ("LIVE" in txt) or ("AO VIVO" in txt):
+                    if (tsr.get("style") or "").upper() == "LIVE" or (tsr.get("text") or {}).get("simpleText") == "LIVE":
                         is_live = True
                         break
                 if not is_live:
                     for b in vr.get("badges", []) or []:
                         br = b.get("metadataBadgeRenderer") or {}
-                        label = (br.get("label") or "").upper()
-                        style = (br.get("style") or "").upper()
-                        if ("LIVE" in label) or ("LIVE" in style) or ("AO VIVO" in label):
+                        if "LIVE" in (br.get("label") or "").upper():
                             is_live = True
                             break
                 if not is_live:
@@ -441,99 +408,9 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
     walk(data)
     return out
 
-def _extract_live_video_ids_from_html_loose(html: str, limit: int = 40) -> List[str]:
-    """Fallback robusto: busca videoId proximo de sinais de live no HTML bruto."""
-    out: List[str] = []
-    if not html:
-        return out
-    text = html or ""
-    tokens = (
-        "islivenow",
-        "islive",
-        "live_now",
-        "live now",
-        "badge_style_type_live_now",
-        "ao vivo",
-        "assistindo",
-        "concurrentviewers",
-        "concurrent viewers",
-    )
-    for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', text):
-        vid = m.group(1)
-        s = max(0, m.start() - 220)
-        e = min(len(text), m.end() + 480)
-        win = text[s:e].lower()
-        if any(tk in win for tk in tokens):
-            if vid not in out:
-                out.append(vid)
-                if len(out) >= max(1, limit):
-                    break
-    return out
-
-def _extract_video_ids_from_channel_feed(channel_id: str, limit: int = 30) -> List[str]:
-    """LÃª o feed XML do canal e retorna video_ids recentes.
-    Fallback para quando pÃ¡ginas /streams e /live_view vierem sem videoId.
-    """
-    cid = (channel_id or "").strip()
-    if not cid:
-        return []
-    try:
-        url = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
-        r = SESSION.get(url, timeout=SCRAPE_TIMEOUT)
-        r.raise_for_status()
-        ids = re.findall(r"<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>", r.text or "")
-        seen = set()
-        out: List[str] = []
-        for vid in ids:
-            if vid in seen:
-                continue
-            seen.add(vid)
-            out.append(vid)
-            if len(out) >= max(1, limit):
-                break
-        return out
-    except Exception as e:
-        _log_debug(f"[_extract_video_ids_from_channel_feed] erro: {e}")
-        return []
-
-def _has_recent_chat_activity(video_id: str, within_minutes: int = 20, probe_seconds: float = 1.5) -> bool:
-    """Fallback sem API: detecta atividade recente no chat para inferir live ativa.
-    Evita depender apenas do HTML do watch quando a VM recebe playability inconsistente.
-    """
-    br_tz = timezone(timedelta(hours=-3))
-    now_brt = datetime.now(br_tz)
-    chat = None
-    try:
-        chat = _create_chat(video_id)
-        deadline = time.time() + max(1.0, probe_seconds)
-        while time.time() < deadline:
-            data = chat.get()
-            items = getattr(data, "items", []) or []
-            for it in items:
-                dt_raw = getattr(it, "datetime", None)
-                if not isinstance(dt_raw, str):
-                    continue
-                try:
-                    dt = datetime.strptime(dt_raw[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=br_tz)
-                except Exception:
-                    continue
-                age_min = (now_brt - dt).total_seconds() / 60.0
-                if -5 <= age_min <= within_minutes:
-                    return True
-            time.sleep(0.35)
-    except Exception:
-        return False
-    finally:
-        try:
-            if chat:
-                chat.terminate()
-        except Exception:
-            pass
-    return False
-
 def _api_search_live(channel_id: str) -> List[Tuple[str, str]]:
     """Descobre lives ativas via YouTube Data API v3 (search.list).
-    Usa cache de API_CACHE_TTL segundos para nÃ£o estourar a quota diÃ¡ria."""
+    Usa cache de API_CACHE_TTL segundos para nao estourar a quota diaria."""
     if not YOUTUBE_API_KEY or not channel_id:
         return []
     now_ts = time.time()
@@ -570,7 +447,7 @@ def _api_search_live(channel_id: str) -> List[Tuple[str, str]]:
 
 
 def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_MAX_RESULTS) -> List[Tuple[str, str]]:
-    """EstratÃ©gia combinada para descobrir lives ativas do canal."""
+    """Estratégia combinada para descobrir lives ativas do canal."""
 
     def uniq(seq):
         seen = set(); out = []
@@ -609,7 +486,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 for vid in _extract_live_video_ids_from_html(html):
                     ok, title = is_live_now(vid)
                     if ok: return (vid, title or oembed_title(vid))
-                # YouTube /live parou de redirecionar â€” extrai videoId do canonical link
+                # YouTube /live parou de redirecionar — extrai videoId do canonical link
                 for pat in [
                     r'"canonical"[^>]*?watch\?v=([A-Za-z0-9_-]{11})',
                     r'"canonicalBaseUrl"\s*:\s*"/watch\?v=([A-Za-z0-9_-]{11})"',
@@ -630,7 +507,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         if not cid and h:
             cid = resolve_channel_id_by_handle(h)
 
-        # EstratÃ©gia 0: YouTube Data API v3 (confiÃ¡vel, cache 60s)
+        # Estrategia 0: YouTube Data API v3 (confiavel, cache 60s)
         api_confirmed: Set[str] = set()
         api_lives: List[Tuple[str, str]] = []
         if cid:
@@ -638,7 +515,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             for vid, title in api_lives:
                 api_confirmed.add(vid)
 
-        # A) Listagem "sÃ³ lives"
+        # A) Listagem "so lives"
         collected_ids: List[str] = [vid for vid, _ in api_lives]
         chat_fallback_ids: Set[str] = set()
         if h:
@@ -650,6 +527,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             if html:
                 collected_ids.extend(_extract_live_video_ids_from_html(html))
         collected_ids = uniq(collected_ids)
+        chat_fallback_ids: Set[str] = set()
         chat_fallback_ids.update(collected_ids)
 
         # B) Fallback: /streams e home
@@ -662,19 +540,10 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 if not html: continue
                 ids = _extract_live_video_ids_from_html(html)
                 if not ids:
-                    ids = _extract_live_video_ids_from_html_loose(html, limit=30)
-                if ids:
-                    for vid in ids:
-                        if vid not in collected_ids:
-                            collected_ids.append(vid)
-                        chat_fallback_ids.add(vid)
-                else:
-                    # Ultimo recurso: ids genericos (apenas se ainda nao temos candidatos).
-                    if not collected_ids:
-                        generic_ids = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', html)][:12]
-                        for vid in generic_ids:
-                            if vid not in collected_ids:
-                                collected_ids.append(vid)
+                    ids = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', html)]
+                for vid in ids:
+                    if vid not in collected_ids:
+                        collected_ids.append(vid)
             except Exception as e:
                 _log_debug(f"[list_live_videos_any] fallback erro: {e}")
 
@@ -686,23 +555,13 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             got = _try_live_endpoint(u)
             if got and got[0] not in collected_ids:
                 collected_ids.append(got[0])
-            if got:
-                chat_fallback_ids.add(got[0])
 
-        # D) Feed XML do canal (fallback robusto para mudancas no HTML)
-        if cid:
-            feed_ids = _extract_video_ids_from_channel_feed(cid, limit=max(max_results, 15))
-            if feed_ids:
-                for vid in feed_ids:
-                    if vid not in collected_ids:
-                        collected_ids.append(vid)
-
-        # Confirma ao vivo e pega tÃ­tulo
+        # Confirma ao vivo e pega titulo
         lives_found: List[Tuple[str, str]] = []
         candidates = uniq(collected_ids)[:16]
         chat_fallback_budget = 2
         for idx, vid in enumerate(candidates):
-            # API v3 confirmou â€" nÃ£o precisa de is_live_now()
+            # API v3 confirmou - nao precisa de is_live_now()
             if vid in api_confirmed:
                 title = dict(api_lives).get(vid, oembed_title(vid))
                 lives_found.append((vid, title))
@@ -710,7 +569,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                     break
                 continue
 
-            # JÃ¡ tem monitor ativo â€" nÃ£o precisa re-verificar via HTTP
+            # Ja tem monitor ativo - nao precisa re-verificar via HTTP
             with state_lock:
                 already_active = any(vid in vids for vids in active_videos.values())
             if already_active:
@@ -722,11 +581,8 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             ok, title = is_live_now(vid)
             if not ok and vid in chat_fallback_ids and chat_fallback_budget > 0 and idx < 6:
                 ttl = (title or oembed_title(vid) or "").lower()
-                # SÃ³ usa fallback de chat quando o prÃ³prio tÃ­tulo indica transmissÃ£o ao vivo.
-                # Evita reanimar replay/vod com chat replay.
                 if "ao vivo" not in ttl and "live" not in ttl:
                     continue
-                # Fallback para casos em que watch retorna UNPLAYABLE na VM, mas o chat estÃ¡ ativo.
                 if _has_recent_chat_activity(vid):
                     ok = True
                     chat_fallback_budget -= 1
@@ -746,7 +602,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         _log_debug(f"[list_live_videos_any] Erro: {e}")
         return []
 
-# â”€â”€â”€ CLASSIFICAÃ‡ÃƒO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── CLASSIFICAÇÃO ───────────────────────────────────────────────────────────
 CLOUD_CONFIDENCE_THRESHOLD = float(os.environ.get("CLOUD_CONFIDENCE_THRESHOLD", "0.70"))
 
 _cloud_session = requests.Session()
@@ -760,30 +616,34 @@ _cloud_session.mount("https://", _cloud_adapter)
 
 _KEYWORD_FALLBACK = [
     # (regex, category, issue, severity)
-    (re.compile(r"\b(?:sem\s+(?:audio|som|narr))\b", re.I),
-                                                                            "AUDIO", "sem_audio",        "high"),
-    (re.compile(r"\b(?:audio|som)\s+(?:estouran|estourad|chiand|ruim|ruido|horrivel|pessim|muito\s+alto|alto\s+demais|baixo|baixissim|abafad|cortand)", re.I),
+    (re.compile(r"\b(?:sem\s+(?:audio|áudio|som|narr))\b", re.I),         "AUDIO", "sem_audio",        "high"),
+    (re.compile(r"\b(?:audio|áudio|som)\s+(?:estouran|estourad|chiand|ruim|ruído|horrivel|horrível|péssim|pessim|muito\s+alto|alto\s+demais|baixo|baixíssim|abafad|cortand)", re.I),
                                                                             "AUDIO", "qualidade_audio",  "medium"),
-    (re.compile(r"\b(?:som|audio)\s+(?:ruim|horrivel|pessim)\b", re.I),
+    (re.compile(r"\b(?:som|audio|áudio)\s+(?:ruim|horrivel|horrível|péssim|pessim)\b", re.I),
                                                                             "AUDIO", "qualidade_audio",  "medium"),
-    # Vazamento de audio: outro canal / outro audio entrando na transmissao
+    # Vazamento de áudio: outro canal / outro áudio entrando na transmissão
     (re.compile(
         r"(?:"
-        r"vaz(?:and|ou|amento)\s+(?:de\s+)?(?:audio|som)"
-        r"|(?:audio|som)\s+vaz(?:and|ou)"
-        r"|entrou\s+(?:outro\s+)?(?:audio|som)"
-        r"|(?:audio|som)\s+(?:de\s+outro|errad|trocad)"
-        r"|trocou\s+(?:o\s+)?(?:audio|som)"
-        r"|(?:outro\s+)?(?:audio|som)\s+(?:entrando|tocando)"
-        r"|passando\s+(?:audio|som)\s+(?:de\s+outro|errad)"
+        r"vaz(?:and|ou|amento)\s+(?:de\s+)?(?:audio|áudio|som)"   # vazando/vazou/vazamento de áudio
+        r"|(?:audio|áudio|som)\s+vaz(?:and|ou)"                    # áudio vazando/vazou
+        r"|entrou\s+(?:outro\s+)?(?:audio|áudio|som)"              # entrou outro áudio
+        r"|(?:audio|áudio|som)\s+(?:de\s+outro|errad|trocad)"      # áudio de outro/errado/trocado
+        r"|trocou\s+(?:o\s+)?(?:audio|áudio|som)"                  # trocou o áudio
+        r"|(?:outro\s+)?(?:audio|áudio|som)\s+(?:entrando|tocando)"# outro áudio entrando/tocando
+        r"|passando\s+(?:audio|áudio|som)\s+(?:de\s+outro|errad)"  # passando áudio de outro
         r")",
         re.I),                                                              "AUDIO", "vazamento_audio",  "high"),
-    (re.compile(r"\b(?:tela\s+preta|tela\s+escura|sem\s+(?:video|imagem))\b", re.I),
+    (re.compile(r"\b(?:tela\s+preta|tela\s+escura|sem\s+(?:video|vídeo|imagem))\b", re.I),
                                                                             "VIDEO", "tela_preta",       "high"),
-    (re.compile(r"\b(?:travand|pixelan|imagem\s+ruim|imagem\s+borrad)", re.I),
+    (re.compile(r"\b(?:pixelan|imagem\s+ruim|imagem\s+borrad)", re.I),
+                                                                            "VIDEO", "qualidade_video",  "medium"),
+    # "travando" so como tecnico com contexto de tela/video/transmissao (evita "travando a bola")
+    (re.compile(
+        r"(?:tela|imagem|video|transmiss|stream|live)[^\n]{0,30}travand"
+        r"|travand[^\n]{0,30}(?:tela|imagem|video|transmiss|stream|live)", re.I),
                                                                             "VIDEO", "qualidade_video",  "medium"),
     # "congelando" so como tecnico se vier junto com contexto de tela/video
-    (re.compile(r"(?:tela|imagem|video|transmiss)[^\n]{0,30}congel|congel[^\n]{0,30}(?:tela|imagem|video|transmiss)", re.I),
+    (re.compile(r"(?:tela|imagem|video|vídeo|transmiss)[^\n]{0,30}congel|congel[^\n]{0,30}(?:tela|imagem|video|vídeo|transmiss)", re.I),
                                                                             "VIDEO", "qualidade_video",  "medium"),
     (re.compile(r"\b(?:buffering|buffer|live\s+caiu|caiu\s+a\s+live|erro\s+ao\s+abrir)\b", re.I),
                                                                             "REDE",  "conexao",          "high"),
@@ -796,25 +656,29 @@ def _keyword_override(text: str) -> Optional[dict]:
             return {"is_technical": True, "category": cat, "issue": issue, "severity": sev}
     return None
 
-# ValidaÃ§Ã£o: pelo menos uma palavra tÃ©cnica precisa estar presente para aceitar positivo do modelo
+# Validação: pelo menos uma palavra técnica precisa estar presente para aceitar positivo do modelo
 _TECH_KEYWORDS = re.compile(
     r"(?:"
-    r"\b(?:audio|Ã¡udio)\b|\bsom\b|\bnarr|\bmicrofone|\bmic\b"  # Ã¡udio
-    r"|\b(?:video|vÃ­deo)\b|\btela\b|\bimagem\b|\bpixel|\bqualidade\b"  # vÃ­deo
-    r"|\btravand|\btravan|\bfreez"                               # travamento (congel removido â€” ambÃ­guo com clima)
-    r"|\bbuffer|\blag\b|\bping\b|\bcaiu\b|\bcarregan|\bloadin"  # rede
-    r"|\bsem\s+(?:som|audio|Ã¡udio|video|vÃ­deo|imagem|sinal)"    # ausÃªncia
-    r"|\bcortand|\bestouran|\bestourad|\bchian|\bruÃ­do|\beco\b"  # distorÃ§Ã£o
+    r"\b(?:audio|áudio)\b|\bsom\b|\bnarr|\bmicrofone|\bmic\b"  # áudio
+    r"|\b(?:video|vídeo)\b|\btela\b|\bimagem\b|\bpixel|\bqualidade\b"  # vídeo
+    r"|\bfreez"                                                  # travamento (travand/travan so com contexto)
+    r"|(?:tela|imagem|video|transmiss|stream|live)[^\n]{0,40}(?:travand|travan)"  # travamento contextual
+    r"|(?:travand|travan)[^\n]{0,40}(?:tela|imagem|video|transmiss|stream|live)"
+    r"|\bbuffer|\blag\b|\bping\b|\bcarregan|\bloadin"           # rede (caiu removido - ambiguo com esporte)
+    r"|\bcaiu\s+(?:a\s+)?(?:live|transmiss|stream|imagem|sinal|audio)"  # caiu contextual
+    r"|\b(?:live|transmiss|stream|imagem|sinal|audio)\s+caiu"
+    r"|\bsem\s+(?:som|audio|áudio|video|vídeo|imagem|sinal)"    # ausência
+    r"|\bcortand|\bestouran|\bestourad|\bchian|\bruído|\beco\b"  # distorção
     r"|\bpreta\b|\bescura\b|\bborrad|\bpixelad"                 # visual
-    r"|\bplacar\b|\bgc\b"                                       # GC
+    r"|\bgc\b"                                                   # GC (placar removido - ambiguo com futebol)
     r"|\bmudo|\bmuta|\bdessincroni|\batraso|\badianta|\bdelay"   # sincronia
-    r"|\bvazand|\bvazou\b|\bvazamento"                          # vazamento de Ã¡udio
+    r"|\bvazand|\bvazou\b|\bvazamento"                          # vazamento de áudio
     r")",
     re.I,
 )
 
 def _has_tech_keyword(text: str) -> bool:
-    """Verifica se o texto contÃ©m pelo menos uma keyword tÃ©cnica."""
+    """Verifica se o texto contém pelo menos uma keyword técnica."""
     return bool(_TECH_KEYWORDS.search(text))
 
 def cloud_classify(comment: str) -> Optional[dict]:
@@ -829,14 +693,14 @@ def cloud_classify(comment: str) -> Optional[dict]:
         data = r.json()
         is_tech = bool(data.get("is_technical", False))
         confidence = float(data.get("confidence", 1.0))
-        # Descarta classificaÃ§Ãµes positivas com baixa confianÃ§a
+        # Descarta classificações positivas com baixa confiança
         if is_tech and confidence < CLOUD_CONFIDENCE_THRESHOLD:
             is_tech = False
-        # Rejeita falso positivo genÃ©rico (modelo disse tÃ©cnico mas sem keyword match)
+        # Rejeita falso positivo genérico (modelo disse técnico mas sem keyword match)
         cat_raw = data.get("category")
         if is_tech and (cat_raw is None or cat_raw == "OUTRO"):
             is_tech = False
-        # Guarda contra falso positivo: modelo disse tÃ©cnico mas nenhuma keyword tÃ©cnica presente
+        # Guarda contra falso positivo: modelo disse técnico mas nenhuma keyword técnica presente
         if is_tech and not _has_tech_keyword(comment):
             is_tech = False
         sev = (data.get("severity") or "none").lower()
@@ -844,7 +708,7 @@ def cloud_classify(comment: str) -> Optional[dict]:
             sev = "none"
         if not is_tech:
             sev = "none"
-        # Fallback: modelo disse nÃ£o-tÃ©cnico, mas regex detecta problema claro
+        # Fallback: modelo disse não-técnico, mas regex detecta problema claro
         if not is_tech:
             override = _keyword_override(comment)
             if override:
@@ -865,11 +729,11 @@ def classify(comment: str) -> Optional[dict]:
     if len(comment) > MAX_COMMENT_LENGTH:
         return None
     if not SERVING_URL:
-        _log_debug("classify: SERVING_URL nÃ£o configurado")
+        _log_debug("classify: SERVING_URL não configurado")
         return None
     return cloud_classify(comment)
 
-# â”€â”€â”€ MONITOR DE CHAT (processo filho) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── MONITOR DE CHAT (processo filho) ────────────────────────────────────────
 def _sig(author: str, msg: str, ts_iso: Optional[str], mid: Optional[str]) -> str:
     if mid:
         return "id:" + mid
@@ -877,9 +741,9 @@ def _sig(author: str, msg: str, ts_iso: Optional[str], mid: Optional[str]) -> st
     return "h:" + hashlib.sha1(base.encode("utf-8", errors="ignore")).hexdigest()
 
 def _create_chat(video_id: str):
-    return pytchat.create(video_id=video_id, topchat_only=False, interruptable=False)
+    return pytchat.create(video_id=video_id, topchat_only=False, interruptable=True)
 
-def monitor_process_main(channel_display: str, video_id: str, title: str, queue: _stdlib_queue.Queue, stop_event: Event):
+def monitor_process_main(channel_display: str, video_id: str, title: str, queue: Queue):
     proc_name = f"monitor[{channel_display}:{video_id}]"
     chat = None
     last_item_ts   = time.time()
@@ -909,7 +773,7 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
         queue.put({"type": "heartbeat", "channel": channel_display, "video_id": video_id,
                    "title": title, "url": f"https://www.youtube.com/watch?v={video_id}", "ts": now_iso()})
 
-        while not stop_event.is_set():
+        while True:
             try:
                 if chat is None or not chat.is_alive():
                     recreate("chat not alive")
@@ -952,27 +816,27 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
                         msg = getattr(c, "message", "")
                         ts_chat = None
                         try:
-                            ts_raw = getattr(c, "timestamp", None)
-                            if isinstance(ts_raw, (int, float)):
-                                ts_chat = datetime.fromtimestamp(
-                                    ts_raw / 1000, tz=timezone(timedelta(hours=-3))
-                                ).isoformat()
-                            else:
-                                ts_chat = getattr(c, "datetime", None)
+                            ts_chat = getattr(c, "datetime", None)
+                            if not isinstance(ts_chat, str):
+                                ts_raw = getattr(c, "timestamp", None)
+                                if isinstance(ts_raw, (int, float)):
+                                    ts_chat = datetime.fromtimestamp(
+                                        ts_raw / 1000, tz=timezone(timedelta(hours=-3))
+                                    ).isoformat()
                         except Exception:
                             ts_chat = None
 
                         sig = _sig(author, msg, ts_chat if isinstance(ts_chat, str) else None, mid)
                         if sig in recent_set:
                             continue
-                        # Evicta ANTES do append para pegar o item correto que serÃ¡ removido
-                        if len(recent) == recent.maxlen:
-                            try:
-                                recent_set.discard(recent[0])
-                            except Exception:
-                                pass
                         recent.append(sig)
                         recent_set.add(sig)
+                        if len(recent) == recent.maxlen:
+                            try:
+                                oldest = recent[0]
+                                recent_set.discard(oldest)
+                            except Exception:
+                                pass
 
                         queue.put({
                             "type":     "chat",
@@ -1028,140 +892,56 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
             pass
         queue.put({"type": "log", "msg": f"[{proc_name}] encerrado", "ts": now_iso()})
 
-# â”€â”€â”€ LIMPEZA DE EMOJIS CUSTOM DO YOUTUBE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── LIMPEZA DE EMOJIS CUSTOM DO YOUTUBE ──────────────────────────────────────
 _YT_EMOJI_RE = re.compile(r":[^:\s]{1,50}:")
 
 def _clean_yt_emojis(text: str) -> str:
     """Remove emoji codes custom do YouTube (:nome:) da mensagem.
-    Emojis Unicode normais (ðŸ˜‚â¤ï¸ðŸ”¥) passam intactos."""
+    Emojis Unicode normais (😂❤️🔥) passam intactos."""
     return _YT_EMOJI_RE.sub("", text).strip()
 
-# â”€â”€â”€ PRÃ‰-FILTRO RÃPIDO (descarta mensagens Ã³bvias sem chamar IA) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── PRÉ-FILTRO RÁPIDO (descarta mensagens óbvias sem chamar IA) ─────────────
 _PREFILTER_SKIP = re.compile(
-    r"^[\U0001F600-\U0001FAFF\U00002702-\U000027B0\sâ¤ï¸ðŸ”¥ðŸ‘ðŸ˜‚ðŸ¤£ðŸ’€ðŸ˜ðŸ¥°ðŸ˜­ðŸ˜ŽðŸ‘ðŸ‡§ðŸ‡·]+$"  # sÃ³ emojis
+    r"^[\U0001F600-\U0001FAFF\U00002702-\U000027B0\s❤️🔥👏😂🤣💀😍🥰😭😎👍🇧🇷]+$"  # só emojis
     r"|^.{0,2}$"                                                                        # < 3 chars
-    r"|^(?:boa\s+(?:noite|tarde)|bom\s+dia|oi+|ola|hello|hi)\b"                        # saudaÃ§Ãµes
-    r"|^(?:goo*l+|golaÃ§o|que\s+golaÃ§o)\b"                                               # torcida
+    r"|^(?:boa\s+(?:noite|tarde)|bom\s+dia|oi+|ola|hello|hi)\b"                        # saudações
+    r"|^(?:goo*l+|golaço|que\s+golaço)\b"                                               # torcida
     r"|^(?:vai\s+\w+|vamo|bora)\b"                                                      # torcida
     r"|^(?:kkk+|haha+|rsrs+|lol+)\s*$"                                                  # risadas
+    r"|^(?:que\s+jogo|jogao|joga[çc]o|partida[ao]|que\s+partida)\b"              # elogio ao jogo
+    r"|^(?:penalti|penalt[ei]|falta|impedimento|escanteio|cartao|cartão)\b"         # termos de futebol
+    r"|^(?:ganhou|perdeu|empatou|venceu|ganha|perde|empat)\b"                            # resultado
+    r"|^(?:que\s+gol|que\s+golazo|golazo)\b"                                          # gol extra
 , re.I | re.UNICODE)
 
 def _should_skip_classify(text: str) -> bool:
-    """Retorna True se o texto Ã© obviamente nÃ£o-tÃ©cnico e pode pular a IA."""
+    """Retorna True se o texto é obviamente não-técnico e pode pular a IA."""
     return bool(_PREFILTER_SKIP.search(text.strip()))
 
-# â”€â”€â”€ QUEUE CONSUMER (batch GPU) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── QUEUE CONSUMER (batch GPU) ───────────────────────────────────────────────
 #
-# Arquitetura para alto volume (atÃ© 500 msg/s):
+# Arquitetura para alto volume (até 500 msg/s):
 #
-#   pytchat â†’ multiprocessing.Queue â†’ consumer_loop
-#                  â†“ (enqueue imediato, O(1))
+#   pytchat → multiprocessing.Queue → consumer_loop
+#                  ↓ (enqueue imediato, O(1))
 #             _batch_queue (stdlib thread-safe)
-#                  â†“ (drena a cada BATCH_MAX_WAIT s ou BATCH_SIZE itens)
-#             _batcher_loop â†’ POST /classify/batch (GPU, atÃ© 64 textos/req)
-#                  â†“ (resultados em batch)
-#             _process_batch â†’ Firestore WriteBatch (reduz RPCs)
+#                  ↓ (drena a cada BATCH_MAX_WAIT s ou BATCH_SIZE itens)
+#             _batcher_loop → POST /classify/batch (GPU, até 64 textos/req)
+#                  ↓ (resultados em batch)
+#             _process_batch → Firestore WriteBatch (reduz RPCs)
 #
 # Contadores do live doc (total_comments, technical_comments, issue_counts)
-# sÃ£o acumulados em memÃ³ria e gravados no Firestore a cada FS_FLUSH_SECS,
+# são acumulados em memória e gravados no Firestore a cada FS_FLUSH_SECS,
 # evitando o problema de "hot document" a 500 writes/s.
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─────────────────────────────────────────────────────────────────────────────
 
-_batch_queue    = _stdlib_queue.Queue(maxsize=200_000)   # inicializado aqui â€” nunca None
+_batch_queue:   Optional[_stdlib_queue.Queue] = None
 _counter_lock   = Lock()
-_pending_counts: dict = {}   # vid â†’ {total, technical, issue_counts}
-
-# â”€â”€â”€ AUDIÃŠNCIA / GPU POR LIVE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-_gpu_lives:     Set[str] = set()   # video_ids com GPU ativo
-_viewer_counts: Dict[str, int] = {}
-_viewer_lock    = Lock()
-
-
-def _fetch_concurrent_viewers(video_ids: List[str]) -> Dict[str, int]:
-    """Consulta YouTube Data API v3 â€” retorna concurrent_viewers por video_id."""
-    if not YOUTUBE_API_KEY or not video_ids:
-        return {}
-    try:
-        r = requests.get(
-            "https://www.googleapis.com/youtube/v3/videos",
-            params={
-                "part":   "liveStreamingDetails",
-                "id":     ",".join(video_ids),
-                "key":    YOUTUBE_API_KEY,
-                "fields": "items(id,liveStreamingDetails(concurrentViewers))",
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-        result: Dict[str, int] = {}
-        for item in r.json().get("items", []):
-            vid = item.get("id", "")
-            raw = item.get("liveStreamingDetails", {}).get("concurrentViewers", "0")
-            try:
-                result[vid] = int(raw)
-            except (ValueError, TypeError):
-                result[vid] = 0
-        return result
-    except Exception as e:
-        _log_debug(f"[viewership] erro: {e}")
-        return {}
-
-
-def _viewership_poll_loop():
-    """Thread daemon: a cada VIEWER_POLL_SECS busca audiÃªncia e decide GPU por live."""
-    while True:
-        time.sleep(VIEWER_POLL_SECS)
-        try:
-            with state_lock:
-                all_vids = [vid for vids in active_videos.values() for vid in vids]
-            # Fallback: inclui tambÃ©m docs status=active do Firestore.
-            # Evita perder audiÃªncia quando a descoberta oscila.
-            fs = _get_fs()
-            if fs:
-                try:
-                    for d in fs.collection("lives").where("status", "==", "active").stream():
-                        all_vids.append(d.id)
-                except Exception as e:
-                    _log_debug(f"[viewership] active docs fallback: {e}")
-            all_vids = list(dict.fromkeys(all_vids))
-            if not all_vids:
-                continue
-
-            viewers_map = _fetch_concurrent_viewers(all_vids)
-            viewers_full = {vid: int(viewers_map.get(vid, 0)) for vid in all_vids}
-
-            with _viewer_lock:
-                _viewer_counts.update(viewers_full)
-                for vid, viewers in viewers_full.items():
-                    if viewers >= GPU_VIEWER_THRESHOLD:
-                        if vid not in _gpu_lives:
-                            _log_debug(f"[GPU] {vid}: {viewers:,} viewers â‰¥ {GPU_VIEWER_THRESHOLD:,} â€” GPU ON")
-                            _gpu_lives.add(vid)
-                    else:
-                        if vid in _gpu_lives:
-                            _log_debug(f"[GPU] {vid}: {viewers:,} viewers < {GPU_VIEWER_THRESHOLD:,} â€” GPU OFF")
-                        _gpu_lives.discard(vid)
-
-            # Salva no Firestore para o dashboard exibir
-            if fs:
-                for vid, viewers in viewers_full.items():
-                    try:
-                        fs.collection("lives").document(vid).update({
-                            "concurrent_viewers": viewers,
-                            "gpu_active":         vid in _gpu_lives,
-                        })
-                    except Exception as e:
-                        _log_debug(f"[viewership] Firestore {vid}: {e}")
-
-            active_str = ", ".join(f"{v}({viewers_full.get(v,0):,})" for v in _gpu_lives) or "nenhuma"
-            _log_debug(f"[viewership] lives com GPU: {active_str}")
-
-        except Exception as e:
-            _log_debug(f"[viewership_poll] {e}")
+_pending_counts: dict = {}   # vid → {total, technical, issue_counts}
 
 
 def _accum_counter(vid: str, is_tech: bool, category, issue):
-    """Acumula contadores em memÃ³ria â€” flush periÃ³dico via _counter_flush_loop."""
+    """Acumula contadores em memória — flush periódico via _counter_flush_loop."""
     with _counter_lock:
         c = _pending_counts.setdefault(vid, {"total": 0, "technical": 0, "issue_counts": {}})
         c["total"] += 1
@@ -1177,19 +957,17 @@ def _flush_pending_counts():
     global _pending_counts
     with _counter_lock:
         snapshot, _pending_counts = _pending_counts, {}
-    failed: dict = {}
     for vid, c in snapshot.items():
         try:
             fs = _get_fs()
             if not fs:
-                failed[vid] = c
                 continue
             upd: dict = {
                 "total_comments":     fb_firestore.Increment(c["total"]),
                 "technical_comments": fb_firestore.Increment(c["technical"]),
                 "last_seen_at":       now_iso(),
             }
-            # Usa nested dict (nÃ£o dot-notation) para issue_counts:
+            # Usa nested dict (não dot-notation) para issue_counts:
             # evita erro "Invalid char" quando a categoria tem '/' (ex: REDE/PLATAFORMA)
             if c["issue_counts"]:
                 upd["issue_counts"] = {
@@ -1199,19 +977,10 @@ def _flush_pending_counts():
             fs.collection("lives").document(vid).update(upd)
         except Exception as e:
             _log_debug(f"[counter_flush] {vid}: {e}")
-            failed[vid] = c  # re-enfileira para prÃ³ximo ciclo
-    if failed:
-        with _counter_lock:
-            for vid, c in failed.items():
-                ex = _pending_counts.setdefault(vid, {"total": 0, "technical": 0, "issue_counts": {}})
-                ex["total"]     += c["total"]
-                ex["technical"] += c["technical"]
-                for k, n in c["issue_counts"].items():
-                    ex["issue_counts"][k] = ex["issue_counts"].get(k, 0) + n
 
 
 def _counter_flush_loop():
-    """Thread daemon: flush periÃ³dico de contadores."""
+    """Thread daemon: flush periódico de contadores."""
     while True:
         time.sleep(FS_FLUSH_SECS)
         try:
@@ -1225,11 +994,11 @@ def _process_batch(items: list):
     if not items:
         return
 
-    # Itens que precisam de IA vs prÃ©-filtrados
+    # Itens que precisam de IA vs pré-filtrados
     ai_items  = [it for it in items if it["needs_ai"]]
     ai_texts  = [it["text"] for it in ai_items]
 
-    # Chama /classify/batch â€” 1 request para N textos (GPU)
+    # Chama /classify/batch — 1 request para N textos (GPU)
     raw_results: list = []
     if ai_texts and SERVING_URL:
         try:
@@ -1248,7 +1017,7 @@ def _process_batch(items: list):
     for i, it in enumerate(ai_items):
         ai_result_map[it["comment_id"]] = raw_results[i] if i < len(raw_results) else None
 
-    # Firestore WriteBatch â€” salva comment docs + minutes de uma vez
+    # Firestore WriteBatch — salva comment docs + minutes de uma vez
     fs = _get_fs()
     if not fs:
         return
@@ -1258,7 +1027,7 @@ def _process_batch(items: list):
 
     def _maybe_commit():
         nonlocal batch, batch_ops
-        if batch_ops >= 400:   # limite do WriteBatch Ã© 500; margem de seguranÃ§a
+        if batch_ops >= 400:   # limite do WriteBatch é 500; margem de segurança
             try:
                 batch.commit()
             except Exception as e:
@@ -1298,7 +1067,7 @@ def _process_batch(items: list):
 
         live_ref = fs.collection("lives").document(it["vid"])
 
-        # Grava comentÃ¡rio
+        # Grava comentário
         batch.set(
             live_ref.collection("comments").document(it["comment_id"]),
             {
@@ -1343,7 +1112,7 @@ def _batcher_loop():
     last_send = time.time()
 
     while True:
-        # Coleta atÃ© BATCH_SIZE itens ou atÃ© BATCH_MAX_WAIT segundos
+        # Coleta até BATCH_SIZE itens ou até BATCH_MAX_WAIT segundos
         deadline = last_send + BATCH_MAX_WAIT
         while len(pending) < BATCH_SIZE:
             remaining = deadline - time.time()
@@ -1357,19 +1126,18 @@ def _batcher_loop():
                     break
 
         if pending:
-            to_send = pending[:BATCH_SIZE]
-            pending = pending[BATCH_SIZE:]
-            t = Thread(target=_process_batch, args=(to_send,), daemon=True)
-            t.start()
-            t.join(timeout=SERVING_TIMEOUT + 30)
-            if t.is_alive():
-                _log_debug(f"[batcher] AVISO: _process_batch travado â€” batch de {len(to_send)} perdido")
+            to_send  = pending[:BATCH_SIZE]
+            pending  = pending[BATCH_SIZE:]
+            try:
+                _process_batch(to_send)
+            except Exception:
+                _log_debug(f"[batcher] error: {traceback.format_exc()}")
 
         last_send = time.time()
 
 
 def _process_chat_item(vid: str, author: str, text: str, ts: str):
-    """Limpa, prÃ©-filtra e enfileira no batcher (O(1), nÃ£o bloqueia o consumer)."""
+    """Limpa, pre-filtra e enfileira no batcher (O(1), nao bloqueia o consumer)."""
     _last_chat_msg_ts[vid] = time.time()
     try:
         text = _clean_yt_emojis(text)
@@ -1392,17 +1160,19 @@ def _process_chat_item(vid: str, author: str, text: str, ts: str):
                 "needs_ai":   needs_ai,
             })
         except _stdlib_queue.Full:
-            _log_debug(f"[batcher] fila cheia â€” descartando msg de {vid}")
+            _log_debug(f"[batcher] fila cheia — descartando msg de {vid}")
 
     except Exception:
         _log_debug(f"[_process_chat_item] error: {traceback.format_exc()}")
 
 
-def queue_consumer_loop(q: _stdlib_queue.Queue):
-    Thread(target=_batcher_loop,        daemon=True, name="batcher").start()
-    Thread(target=_counter_flush_loop,  daemon=True, name="counter_flush").start()
-    Thread(target=_viewership_poll_loop, daemon=True, name="viewership_poll").start()
-    _log_debug(f"[consumer] batch_size={BATCH_SIZE} max_wait={BATCH_MAX_WAIT}s flush={FS_FLUSH_SECS}s gpu_threshold={GPU_VIEWER_THRESHOLD:,}")
+def queue_consumer_loop(q: Queue):
+    global _batch_queue
+    _batch_queue = _stdlib_queue.Queue(maxsize=200_000)
+
+    Thread(target=_batcher_loop,       daemon=True, name="batcher").start()
+    Thread(target=_counter_flush_loop, daemon=True, name="counter_flush").start()
+    _log_debug(f"[consumer] batch_size={BATCH_SIZE} max_wait={BATCH_MAX_WAIT}s flush={FS_FLUSH_SECS}s")
 
     while True:
         try:
@@ -1422,8 +1192,11 @@ def queue_consumer_loop(q: _stdlib_queue.Queue):
             elif t == "heartbeat":
                 vid   = item["video_id"]
                 ch    = item["channel"]
+                title = item.get("title") or ""
                 url   = item.get("url", f"https://www.youtube.com/watch?v={vid}")
-                fs_touch_live(vid, ch, url)
+                if not title or title == vid:
+                    title = oembed_title(vid)
+                fs_upsert_live(vid, ch, title, url)
 
             elif t == "chat":
                 vid    = item["video_id"]
@@ -1438,10 +1211,10 @@ def queue_consumer_loop(q: _stdlib_queue.Queue):
         except Exception:
             _log_debug(f"queue_consumer error: {traceback.format_exc()}")
 
-# â”€â”€â”€ SUPERVISOR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── SUPERVISOR ──────────────────────────────────────────────────────────────
 def _load_active_from_firestore(channel_display: str):
-    """Na inicializaÃ§Ã£o, popula active_videos com lives status=active do Firestore.
-    Assim o miss-tolerance encerra lives de sessÃµes anteriores na 1Âª varredura."""
+    """Na inicialização, popula active_videos com lives status=active do Firestore.
+    Assim o miss-tolerance encerra lives de sessões anteriores na 1ª varredura."""
     if not FIRESTORE_ENABLED:
         return
     try:
@@ -1462,7 +1235,7 @@ def _load_active_from_firestore(channel_display: str):
         _log_debug(f"[_load_active_from_firestore] erro: {e}")
 
 def channel_supervisor_loop(channel_display: str, name: str, handle: str,
-                            preset_channel_id: str, queue: _stdlib_queue.Queue):
+                            preset_channel_id: str, queue: Queue):
     _log_debug(f"[{channel_display}] supervisor iniciado")
     channel_id = (preset_channel_id.strip() if preset_channel_id else "") or ""
     if not channel_id and handle:
@@ -1482,7 +1255,7 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
             t0    = time.time()
             lives = list_live_videos_any(handle, channel_id, max_results=LIVE_MAX_RESULTS)
             dt    = time.time() - t0
-            _log_debug(f"[{channel_display}] varredura em {dt:.1f}s â€” {len(lives)} live(s)")
+            _log_debug(f"[{channel_display}] varredura em {dt:.1f}s — {len(lives)} live(s)")
 
             current_ids: Set[str] = set()
             for vid, title in lives:
@@ -1498,30 +1271,27 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                                f"https://www.youtube.com/watch?v={vid}")
 
                 key  = (channel_display, vid)
-                thr  = running_monitors.get(key)
+                proc = running_monitors.get(key)
                 nowt = time.time()
-                if not thr or not thr.is_alive():
+                if not proc or not proc.is_alive():
                     last_attempt = last_start_attempt.get(key, 0)
                     if nowt - last_attempt > CHAT_RETRY_SECONDS:
                         _log_debug(f"[{channel_display}] iniciando monitor {vid} ({title})")
-                        ev = Event()
-                        t = Thread(
+                        p = Process(
                             target=monitor_process_main,
-                            args=(channel_display, vid, title, queue, ev),
+                            args=(channel_display, vid, title, queue),
                             daemon=True,
-                            name=f"monitor[{channel_display}:{vid}]",
                         )
-                        t.start()
-                        running_monitors[key] = t
-                        _stop_events[key] = ev
+                        p.start()
+                        running_monitors[key] = p
                         last_start_attempt[key] = nowt
 
-            # Miss tolerance â€” encerra monitores de lives que sumiram
+            # Miss tolerance — encerra monitores de lives que sumiram
             with state_lock:
                 known = set(active_videos.get(channel_display, set()))
                 for vid in known:
                     if vid not in current_ids:
-                        # Chat-aware: se recebeu msg recentemente, live estÃ¡ ativa
+                        # Chat-aware: se recebeu msg recentemente, live esta ativa
                         last_msg = _last_chat_msg_ts.get(vid, 0)
                         if time.time() - last_msg < CHAT_ALIVE_GRACE:
                             video_misses[vid] = 0
@@ -1532,8 +1302,6 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                 for vid in to_remove:
                     active_videos[channel_display].discard(vid)
                     video_misses.pop(vid, None)
-                    # Marca encerrada direto no supervisor para nÃ£o depender apenas da fila.
-                    fs_mark_live_ended(vid)
                     queue.put({"type": "ended", "channel": channel_display, "video_id": vid})
                     stop_monitor(channel_display, vid)
                     _log_debug(f"[{channel_display}] live encerrada: {vid}")
@@ -1545,11 +1313,11 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
             traceback.print_exc()
             time.sleep(10)
 
-# â”€â”€â”€ BOOTSTRAP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-q: _stdlib_queue.Queue = _stdlib_queue.Queue()
+# ─── BOOTSTRAP ───────────────────────────────────────────────────────────────
+q: Queue = Queue()
 
 def queue_consumer_bootstrap():
-    # Um Ãºnico dispatcher thread + ThreadPoolExecutor interno com LLM_WORKERS
+    # Um único dispatcher thread + ThreadPoolExecutor interno com LLM_WORKERS
     Thread(target=queue_consumer_loop, args=(q,), daemon=True).start()
 
 def supervisors_bootstrap():
@@ -1562,32 +1330,24 @@ def supervisors_bootstrap():
 
 def _graceful_shutdown(signum, frame):
     print(f"\nRecebido sinal {signum}, encerrando monitores...")
-    with state_lock:
-        items = list(running_monitors.items())
-    for key, thr in items:
+    for key, proc in list(running_monitors.items()):
         try:
-            ev = _stop_events.get(key)
-            if ev:
-                ev.set()
-        except Exception:
-            pass
-    for key, thr in items:
-        try:
-            thr.join(timeout=3)
+            if proc.is_alive():
+                proc.terminate()
         except Exception:
             pass
     running_monitors.clear()
-    _stop_events.clear()
     raise SystemExit(0)
 
-# â”€â”€â”€ MAIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── MAIN ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     signal.signal(signal.SIGINT,  _graceful_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
 
     print("=" * 60)
-    print("  Monitor de Lives â€” CazÃ©TV")
-    print(f"  Cloud Run : {SERVING_URL or 'NAO CONFIGURADO â€” defina SERVING_URL'}")
+    print("  Monitor de Lives — CazéTV")
+    print(f"  Cloud Run : {SERVING_URL or 'NAO CONFIGURADO — defina SERVING_URL'}")
     print(f"  Firestore : {'ativo' if FIRESTORE_ENABLED else 'desativado'}")
     print("=" * 60)
     for ch in CHANNELS:
@@ -1597,7 +1357,6 @@ if __name__ == "__main__":
     queue_consumer_bootstrap()
     supervisors_bootstrap()
 
-    # MantÃ©m o processo principal vivo
+    # Mantém o processo principal vivo
     while True:
         time.sleep(1)
-
