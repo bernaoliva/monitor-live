@@ -3,8 +3,8 @@ import "./globals.css"
 import TabNav from "@/components/TabNav"
 
 export const metadata: Metadata = {
-  title: “Monitor de Lives — CazéTV”,
-  description: “Dashboard de monitoramento de comentários em tempo real”,
+  title: "Monitor de Lives - CazeTV",
+  description: "Dashboard de monitoramento de comentarios em tempo real",
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -44,4 +44,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   )
 }
-

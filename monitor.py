@@ -723,13 +723,18 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
                         msg = getattr(c, "message", "")
                         ts_chat = None
                         try:
-                            ts_chat = getattr(c, "datetime", None)
-                            if not isinstance(ts_chat, str):
+                            ts_raw_str = getattr(c, "datetime", None)
+                            if isinstance(ts_raw_str, str):
+                                # pytchat.c.datetime usa fromtimestamp() na VM (UTC)
+                                # — converter para BRT (UTC-3) antes de salvar
+                                dt_utc = datetime.strptime(ts_raw_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                                ts_chat = dt_utc.astimezone(timezone(timedelta(hours=-3))).strftime("%Y-%m-%d %H:%M:%S")
+                            else:
                                 ts_raw = getattr(c, "timestamp", None)
                                 if isinstance(ts_raw, (int, float)):
                                     ts_chat = datetime.fromtimestamp(
                                         ts_raw / 1000, tz=timezone(timedelta(hours=-3))
-                                    ).isoformat()
+                                    ).strftime("%Y-%m-%d %H:%M:%S")
                         except Exception:
                             ts_chat = None
 

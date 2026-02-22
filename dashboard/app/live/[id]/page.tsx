@@ -13,18 +13,6 @@ import { ArrowLeft, ExternalLink, Clock } from "lucide-react"
 import { formatDistanceToNow, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
-function buildChartData(comments: Comment[], dismissed: Set<string>): ChartPoint[] {
-  const buckets: Record<string, { total: number; technical: number }> = {}
-  comments.forEach((c) => {
-    const minute = format(new Date(c.ts.replace(" ", "T")), "HH:mm")
-    if (!buckets[minute]) buckets[minute] = { total: 0, technical: 0 }
-    buckets[minute].total++
-    if (c.is_technical && !dismissed.has(c.id)) buckets[minute].technical++
-  })
-  return Object.entries(buckets)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([minute, v]) => ({ minute, ...v }))
-}
 
 function minuteKeyFromTs(ts: string): string | null {
   try {
@@ -63,9 +51,9 @@ export default function LivePage() {
   const { id }                    = useParams<{ id: string }>()
   const [live, setLive]           = useState<Live | null>(null)
   const [notFound, setNotFound]   = useState(false)
-  const [comments, setComments]           = useState<Comment[]>([])
-  const [chartComments, setChartComments] = useState<Comment[]>([])
-  const [techComments, setTechComments]   = useState<Comment[]>([])
+  const [comments, setComments]         = useState<Comment[]>([])
+  const [chartPoints, setChartPoints]   = useState<ChartPoint[]>([])
+  const [techComments, setTechComments] = useState<Comment[]>([])
   const [filter, setFilter]           = useState<"all" | "technical">("technical")
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const allComments               = useRef<Comment[]>([])
@@ -152,28 +140,22 @@ export default function LivePage() {
       setComments(data)
     }, (err) => console.error("[Firestore] comments query error:", err))
 
-    // Todos os comentários (sem limite) — apenas para o gráfico
-    const qChart = query(
-      collection(db, "lives", id, "comments"),
-      orderBy("ts", "asc")
+    // Gráfico: lê agregados por minuto da subcoleção minutes/ (leve — igual ao LiveCard)
+    const unsub3 = onSnapshot(
+      collection(db, "lives", id, "minutes"),
+      (snap) => {
+        setChartPoints(
+          snap.docs
+            .filter((d) => /^\d{2}:\d{2}$/.test(d.id))
+            .map((d) => {
+              const raw = d.data()
+              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0 } satisfies ChartPoint
+            })
+            .sort((a, b) => a.minute.localeCompare(b.minute))
+        )
+      },
+      (err) => console.error("[Firestore] minutes query error:", err)
     )
-    const unsub3 = onSnapshot(qChart, (snap) => {
-      setChartComments(
-        snap.docs.map((d) => {
-          const raw = d.data()
-          return {
-            id:           d.id,
-            author:       raw.author       ?? "",
-            text:         raw.text         ?? "",
-            ts:           raw.ts           ?? "",
-            is_technical: raw.is_technical ?? false,
-            category:     raw.category     ?? null,
-            issue:        raw.issue        ?? null,
-            severity:     raw.severity     ?? "none",
-          } satisfies Comment
-        })
-      )
-    }, (err) => console.error("[Firestore] chartComments query error:", err))
 
     // Todos os comentários técnicos da transmissão inteira (sem limite)
     const qTech = query(
@@ -211,7 +193,7 @@ export default function LivePage() {
     ? activeComments
     : [...visibleTech].sort((a, b) => b.ts.localeCompare(a.ts))
   const techCount   = visibleTech.length
-  const chartData  = useMemo(() => buildChartData(chartComments, dismissed), [chartComments, dismissed])
+  const chartData  = chartPoints
   const techRate   = live
     ? Math.round((techCount / Math.max(live.total_comments, 1)) * 100)
     : 0
