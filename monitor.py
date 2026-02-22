@@ -80,6 +80,9 @@ CHAT_IDLE_RECREATE_SECONDS     = 20
 CHAT_HARD_WATCHDOG_SECONDS     = 45
 CHAT_DEDUP_WINDOW              = 5000
 
+# YouTube Data API v3
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+
 # IA — Cloud Run (DistilBERT fine-tuned)
 SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
