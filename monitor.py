@@ -61,15 +61,14 @@ CHANNELS = [
     {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": ""},
 ]
 
-SUPERVISOR_POLL_SECONDS        = 8
+SUPERVISOR_POLL_SECONDS        = 15
 CHAT_RETRY_SECONDS             = 10
 QUEUE_POLL_SECONDS             = 0.5
 LIVE_MAX_RESULTS               = 20
-MISS_TOLERANCE                 = 3
+MISS_TOLERANCE                 = 1
 
 WATCH_VERIFY_TIMEOUT           = 10
 SCRAPE_TIMEOUT                 = 15
-DISCOVERY_TIMEOUT              = 8
 
 CHAT_MAX_DRAIN_CYCLES          = 64
 CHAT_MAX_BATCH_PER_DRAIN       = 500
@@ -114,14 +113,6 @@ for k, v in COOKIE_CONSENT.items():
     SESSION.cookies.set(k, v, domain=".youtube.com")
 
 DEFAULT_PARAMS = {"hl": "pt-BR", "gl": "BR"}
-
-# API v3 search cache
-_api_cache: Dict[str, Tuple[float, List[Tuple[str, str]]]] = {}
-API_CACHE_TTL = 60  # segundos
-
-# Chat-aware miss tolerance
-_last_chat_msg_ts: Dict[str, float] = {}  # video_id -> timestamp da ultima msg
-CHAT_ALIVE_GRACE = 30  # se recebeu msg nos ultimos 30s, live esta ativa
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
 os.makedirs("debug_logs", exist_ok=True)
@@ -411,44 +402,6 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
     walk(data)
     return out
 
-def _api_search_live(channel_id: str) -> List[Tuple[str, str]]:
-    """Descobre lives ativas via YouTube Data API v3 (search.list).
-    Usa cache de API_CACHE_TTL segundos para nao estourar a quota diaria."""
-    if not YOUTUBE_API_KEY or not channel_id:
-        return []
-    now_ts = time.time()
-    cached = _api_cache.get(channel_id)
-    if cached and (now_ts - cached[0]) < API_CACHE_TTL:
-        return cached[1]
-    try:
-        r = requests.get(
-            "https://www.googleapis.com/youtube/v3/search",
-            params={
-                "part": "snippet",
-                "channelId": channel_id,
-                "eventType": "live",
-                "type": "video",
-                "maxResults": 10,
-                "key": YOUTUBE_API_KEY,
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-        results: List[Tuple[str, str]] = []
-        for item in r.json().get("items", []):
-            vid = item["id"]["videoId"]
-            title = item["snippet"]["title"]
-            results.append((vid, title))
-        _api_cache[channel_id] = (now_ts, results)
-        if results:
-            _log_debug(f"[_api_search_live] {len(results)} live(s) via API: {[v for v,_ in results]}")
-        return results
-    except Exception as e:
-        _log_debug(f"[_api_search_live] erro: {e}")
-        _api_cache[channel_id] = (now_ts, [])
-        return []
-
-
 def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_MAX_RESULTS) -> List[Tuple[str, str]]:
     """Estratégia combinada para descobrir lives ativas do canal."""
 
@@ -466,7 +419,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
 
     def _try_live_endpoint(url: str) -> Optional[Tuple[str, str]]:
         try:
-            r = SESSION.get(url, params=DEFAULT_PARAMS, timeout=DISCOVERY_TIMEOUT, allow_redirects=False)
+            r = SESSION.get(url, params=DEFAULT_PARAMS, timeout=SCRAPE_TIMEOUT, allow_redirects=False)
             if r is not None and r.is_redirect:
                 vid = _extract_vid_from_url(r.headers.get("Location", ""))
                 if vid:
@@ -475,7 +428,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         except Exception as e:
             _log_debug(f"[_try_live_endpoint] no-redirect erro: {e}")
         try:
-            r = SESSION.get(url, params=DEFAULT_PARAMS, timeout=DISCOVERY_TIMEOUT, allow_redirects=True)
+            r = SESSION.get(url, params=DEFAULT_PARAMS, timeout=SCRAPE_TIMEOUT, allow_redirects=True)
             if r is not None and r.url:
                 vid = _extract_vid_from_url(r.url)
                 if vid:
@@ -484,7 +437,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         except Exception as e:
             _log_debug(f"[_try_live_endpoint] follow-redirect erro: {e}")
         try:
-            html = safe_get(url, timeout=DISCOVERY_TIMEOUT, allow_redirects=True)
+            html = safe_get(url, timeout=SCRAPE_TIMEOUT, allow_redirects=True)
             if html:
                 for vid in _extract_live_video_ids_from_html(html):
                     ok, title = is_live_now(vid)
@@ -510,28 +463,17 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         if not cid and h:
             cid = resolve_channel_id_by_handle(h)
 
-        # Estrategia 0: YouTube Data API v3 (confiavel, cache 60s)
-        api_confirmed: Set[str] = set()
-        api_lives: List[Tuple[str, str]] = []
-        if cid:
-            api_lives = _api_search_live(cid)
-            for vid, title in api_lives:
-                api_confirmed.add(vid)
-
-        # A) Listagem "so lives"
-        collected_ids: List[str] = [vid for vid, _ in api_lives]
-        chat_fallback_ids: Set[str] = set()
+        # A) Listagem "só lives"
+        collected_ids: List[str] = []
         if h:
-            html = safe_get(f"https://www.youtube.com/@{h}/videos?view=2&live_view=501", timeout=DISCOVERY_TIMEOUT)
+            html = safe_get(f"https://www.youtube.com/@{h}/videos?view=2&live_view=501", timeout=SCRAPE_TIMEOUT)
             if html:
                 collected_ids.extend(_extract_live_video_ids_from_html(html))
         if cid and not collected_ids:
-            html = safe_get(f"https://www.youtube.com/channel/{cid}/videos?view=2&live_view=501", timeout=DISCOVERY_TIMEOUT)
+            html = safe_get(f"https://www.youtube.com/channel/{cid}/videos?view=2&live_view=501", timeout=SCRAPE_TIMEOUT)
             if html:
                 collected_ids.extend(_extract_live_video_ids_from_html(html))
         collected_ids = uniq(collected_ids)
-        chat_fallback_ids: Set[str] = set()
-        chat_fallback_ids.update(collected_ids)
 
         # B) Fallback: /streams e home
         pages = []
@@ -539,7 +481,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         if cid: pages += [f"https://www.youtube.com/channel/{cid}/streams", f"https://www.youtube.com/channel/{cid}"]
         for url in pages:
             try:
-                html = safe_get(url, timeout=DISCOVERY_TIMEOUT)
+                html = safe_get(url, timeout=SCRAPE_TIMEOUT)
                 if not html: continue
                 ids = _extract_live_video_ids_from_html(html)
                 if not ids:
@@ -559,41 +501,12 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             if got and got[0] not in collected_ids:
                 collected_ids.append(got[0])
 
-        # Confirma ao vivo e pega titulo
+        # Confirma ao vivo e pega título
         lives_found: List[Tuple[str, str]] = []
-        candidates = uniq(collected_ids)[:16]
-        chat_fallback_budget = 2
-        for idx, vid in enumerate(candidates):
-            # API v3 confirmou - nao precisa de is_live_now()
-            if vid in api_confirmed:
-                title = dict(api_lives).get(vid, oembed_title(vid))
-                lives_found.append((vid, title))
-                if len(lives_found) >= max_results:
-                    break
-                continue
-
-            # Ja tem monitor ativo - nao precisa re-verificar via HTTP
-            with state_lock:
-                already_active = any(vid in vids for vids in active_videos.values())
-            if already_active:
-                lives_found.append((vid, oembed_title(vid)))
-                if len(lives_found) >= max_results:
-                    break
-                continue
-
+        for vid in collected_ids[:max_results]:
             ok, title = is_live_now(vid)
-            if not ok and vid in chat_fallback_ids and chat_fallback_budget > 0 and idx < 6:
-                ttl = (title or oembed_title(vid) or "").lower()
-                if "ao vivo" not in ttl and "live" not in ttl:
-                    continue
-                if _has_recent_chat_activity(vid):
-                    ok = True
-                    chat_fallback_budget -= 1
-                    _log_debug(f"[list_live_videos_any] fallback chat ativo para {vid}")
             if ok:
                 lives_found.append((vid, title or oembed_title(vid)))
-            if len(lives_found) >= max_results:
-                break
 
         seen = set(); out = []
         for vid, ttl in lives_found:
@@ -638,14 +551,9 @@ _KEYWORD_FALLBACK = [
         re.I),                                                              "AUDIO", "vazamento_audio",  "high"),
     (re.compile(r"\b(?:tela\s+preta|tela\s+escura|sem\s+(?:video|vídeo|imagem))\b", re.I),
                                                                             "VIDEO", "tela_preta",       "high"),
-    (re.compile(r"\b(?:pixelan|imagem\s+ruim|imagem\s+borrad)", re.I),
+    (re.compile(r"\b(?:travand|pixelan|imagem\s+ruim|imagem\s+borrad)", re.I),
                                                                             "VIDEO", "qualidade_video",  "medium"),
-    # "travando" so como tecnico com contexto de tela/video/transmissao (evita "travando a bola")
-    (re.compile(
-        r"(?:tela|imagem|video|transmiss|stream|live)[^\n]{0,30}travand"
-        r"|travand[^\n]{0,30}(?:tela|imagem|video|transmiss|stream|live)", re.I),
-                                                                            "VIDEO", "qualidade_video",  "medium"),
-    # "congelando" so como tecnico se vier junto com contexto de tela/video
+    # "congelando" só como técnico se vier junto com contexto de tela/vídeo
     (re.compile(r"(?:tela|imagem|video|vídeo|transmiss)[^\n]{0,30}congel|congel[^\n]{0,30}(?:tela|imagem|video|vídeo|transmiss)", re.I),
                                                                             "VIDEO", "qualidade_video",  "medium"),
     (re.compile(r"\b(?:buffering|buffer|live\s+caiu|caiu\s+a\s+live|erro\s+ao\s+abrir)\b", re.I),
@@ -664,16 +572,12 @@ _TECH_KEYWORDS = re.compile(
     r"(?:"
     r"\b(?:audio|áudio)\b|\bsom\b|\bnarr|\bmicrofone|\bmic\b"  # áudio
     r"|\b(?:video|vídeo)\b|\btela\b|\bimagem\b|\bpixel|\bqualidade\b"  # vídeo
-    r"|\bfreez"                                                  # travamento (travand/travan so com contexto)
-    r"|(?:tela|imagem|video|transmiss|stream|live)[^\n]{0,40}(?:travand|travan)"  # travamento contextual
-    r"|(?:travand|travan)[^\n]{0,40}(?:tela|imagem|video|transmiss|stream|live)"
-    r"|\bbuffer|\blag\b|\bping\b|\bcarregan|\bloadin"           # rede (caiu removido - ambiguo com esporte)
-    r"|\bcaiu\s+(?:a\s+)?(?:live|transmiss|stream|imagem|sinal|audio)"  # caiu contextual
-    r"|\b(?:live|transmiss|stream|imagem|sinal|audio)\s+caiu"
+    r"|\btravand|\btravan|\bfreez"                               # travamento (congel removido — ambíguo com clima)
+    r"|\bbuffer|\blag\b|\bping\b|\bcaiu\b|\bcarregan|\bloadin"  # rede
     r"|\bsem\s+(?:som|audio|áudio|video|vídeo|imagem|sinal)"    # ausência
     r"|\bcortand|\bestouran|\bestourad|\bchian|\bruído|\beco\b"  # distorção
     r"|\bpreta\b|\bescura\b|\bborrad|\bpixelad"                 # visual
-    r"|\bgc\b"                                                   # GC (placar removido - ambiguo com futebol)
+    r"|\bplacar\b|\bgc\b"                                       # GC
     r"|\bmudo|\bmuta|\bdessincroni|\batraso|\badianta|\bdelay"   # sincronia
     r"|\bvazand|\bvazou\b|\bvazamento"                          # vazamento de áudio
     r")",
@@ -911,10 +815,6 @@ _PREFILTER_SKIP = re.compile(
     r"|^(?:goo*l+|golaço|que\s+golaço)\b"                                               # torcida
     r"|^(?:vai\s+\w+|vamo|bora)\b"                                                      # torcida
     r"|^(?:kkk+|haha+|rsrs+|lol+)\s*$"                                                  # risadas
-    r"|^(?:que\s+jogo|jogao|joga[çc]o|partida[ao]|que\s+partida)\b"              # elogio ao jogo
-    r"|^(?:penalti|penalt[ei]|falta|impedimento|escanteio|cartao|cartão)\b"         # termos de futebol
-    r"|^(?:ganhou|perdeu|empatou|venceu|ganha|perde|empat)\b"                            # resultado
-    r"|^(?:que\s+gol|que\s+golazo|golazo)\b"                                          # gol extra
 , re.I | re.UNICODE)
 
 def _should_skip_classify(text: str) -> bool:
@@ -1140,8 +1040,7 @@ def _batcher_loop():
 
 
 def _process_chat_item(vid: str, author: str, text: str, ts: str):
-    """Limpa, pre-filtra e enfileira no batcher (O(1), nao bloqueia o consumer)."""
-    _last_chat_msg_ts[vid] = time.time()
+    """Limpa, pré-filtra e enfileira no batcher (O(1), não bloqueia o consumer)."""
     try:
         text = _clean_yt_emojis(text)
         if not text:
@@ -1294,12 +1193,6 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                 known = set(active_videos.get(channel_display, set()))
                 for vid in known:
                     if vid not in current_ids:
-                        # Chat-aware: se recebeu msg recentemente, live esta ativa
-                        last_msg = _last_chat_msg_ts.get(vid, 0)
-                        if time.time() - last_msg < CHAT_ALIVE_GRACE:
-                            video_misses[vid] = 0
-                            _log_debug(f"[{channel_display}] {vid} miss ignorado - chat ativo")
-                            continue
                         video_misses[vid] = video_misses.get(vid, 0) + 1
                 to_remove = [vid for vid in known if video_misses.get(vid, 0) >= MISS_TOLERANCE]
                 for vid in to_remove:
@@ -1317,7 +1210,9 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
             time.sleep(10)
 
 # ─── BOOTSTRAP ───────────────────────────────────────────────────────────────
-q: Queue = Queue()
+# IMPORTANTE: q deve ser criado DEPOIS de mp.set_start_method("spawn") no __main__
+# Criar Queue antes do set_start_method causa SIGSEGV no processo filho (spawn mode)
+q = None  # inicializado em __main__ apos set_start_method (antes causava SIGSEGV)
 
 def queue_consumer_bootstrap():
     # Um único dispatcher thread + ThreadPoolExecutor interno com LLM_WORKERS
@@ -1345,6 +1240,10 @@ def _graceful_shutdown(signum, frame):
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
+
+    # Queue criada DEPOIS de set_start_method para evitar SIGSEGV no processo filho
+    q = Queue()
+
     signal.signal(signal.SIGINT,  _graceful_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
 
