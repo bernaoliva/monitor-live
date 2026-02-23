@@ -82,6 +82,7 @@ export default function CommentsChart({ data, height = 220, showLegend = true }:
           angle={-40}
           textAnchor="end"
           dy={4}
+          tickFormatter={(val: string) => val.slice(-5)}
         />
         <YAxis
           tick={{ fill: "rgba(255,255,255,0.25)", fontSize: 11 }}

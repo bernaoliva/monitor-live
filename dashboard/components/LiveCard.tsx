@@ -64,13 +64,9 @@ export default function LiveCard({
   const techSnapshotReadyRef = useRef(false)
 
   const minuteKeyFromTs = (ts: string): string | null => {
-    try {
-      const dt = new Date(ts.includes("T") ? ts : ts.replace(" ", "T"))
-      if (Number.isNaN(dt.getTime())) return null
-      return format(dt, "HH:mm")
-    } catch {
-      return null
-    }
+    // Extrai YYYY-MM-DDTHH:mm diretamente da string (sem conversão de TZ)
+    const m = ts.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+    return m ? `${m[1]}T${m[2]}` : null
   }
 
   // Carrega dismissed do localStorage ao montar
@@ -130,7 +126,7 @@ export default function LiveCard({
     const unsub = onSnapshot(qMinutes, (snap) => {
       setChartData(
         snap.docs
-          .filter((d) => /^\d{2}:\d{2}$/.test(d.id))  // ignora chaves inválidas
+          .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))  // HH:mm ou YYYY-MM-DDTHH:mm
           .map((d) => {
             const raw = d.data()
             return {
