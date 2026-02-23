@@ -1,0 +1,18 @@
+[Unit]
+Description=DistilBERT CPU Inference (local)
+After=network.target
+
+[Service]
+Type=simple
+User=monitor-cazetv
+WorkingDirectory=/home/monitor-cazetv/monitor/serving
+Environment=MODEL_DIR=/home/monitor-cazetv/monitor/model
+Environment=MAX_LEN=64
+ExecStart=/home/monitor-cazetv/monitor/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8080 --workers 1
+Restart=always
+RestartSec=5
+MemoryMax=1500M
+CPUQuota=150%
+
+[Install]
+WantedBy=multi-user.target

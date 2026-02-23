@@ -84,9 +84,14 @@ CHAT_DEDUP_WINDOW              = 5000
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # IA — Cloud Run (DistilBERT fine-tuned)
-SERVING_URL     = os.environ.get("SERVING_URL", "https://SUA_URL_CLOUD_RUN")
+SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
+
+# CPU/GPU híbrido — CPU local para lives com audiencia baixa
+LOCAL_SERVING_URL     = os.environ.get("LOCAL_SERVING_URL", "http://127.0.0.1:8080")
+LOCAL_SERVING_TIMEOUT = int(os.environ.get("LOCAL_SERVING_TIMEOUT", "10"))
+GPU_VIEWER_THRESHOLD  = int(os.environ.get("GPU_VIEWER_THRESHOLD", "300000"))
 
 # Batch de classificação — GPU processa até 64 textos por chamada
 BATCH_SIZE     = int(os.environ.get("BATCH_SIZE",   "64"))   # textos por request ao Cloud Run
@@ -198,6 +203,8 @@ def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
 # Controle de throttle: busca audiência no máximo a cada 60s por video
 _last_viewer_fetch: Dict[str, float] = {}
 VIEWER_FETCH_INTERVAL = 60.0
+# Cache compartilhado de audiencia — atualizado pelo supervisor, lido pelo batcher
+_viewer_cache: Dict[str, Optional[int]] = {}
 
 def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: str = "active"):
     if not FIRESTORE_ENABLED: return
@@ -218,7 +225,10 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
             cv = _fetch_concurrent_viewers(video_id)
             if cv is not None:
                 upd["concurrent_viewers"] = cv
+                _viewer_cache[video_id] = cv
                 _log_debug(f"[viewer_count] {video_id}: {cv:,}")
+        # gpu_active: reflete roteamento atual (CPU local vs Cloud Run GPU)
+        upd["gpu_active"] = (_viewer_cache.get(video_id) or 0) >= GPU_VIEWER_THRESHOLD
         fs.collection("lives").document(video_id).set(upd, merge=True)
     except Exception as e:
         _log_debug(f"[Firestore] fs_upsert_live error: {e}")
@@ -249,10 +259,9 @@ def fs_add_comment(video_id: str, comment_id: str, author: str, text: str,
         })
         # Agrega por minuto para o gráfico (evita o browser baixar todos os comentários)
         try:
-            # Extrai HH:mm de qualquer formato: ISO (2026-02-19T18:57:29) ou espaço (2026-02-19 18:57:29)
-            time_part = ts.split("T")[-1] if "T" in ts else ts.split(" ")[-1] if " " in ts else ts
-            minute_key = time_part[:5]  # HH:mm
-            if minute_key and len(minute_key) == 5:
+            # Chave inclui data para sobreviver à virada de meia-noite: YYYY-MM-DDTHH:mm
+            minute_key = ts[:16] if len(ts) >= 16 else ""
+            if minute_key and len(minute_key) == 16:
                 live_ref.collection("minutes").document(minute_key).set({
                     "total":     fb_firestore.Increment(1),
                     "technical": fb_firestore.Increment(1 if is_technical else 0),
@@ -641,6 +650,17 @@ _cloud_adapter = requests.adapters.HTTPAdapter(
 )
 _cloud_session.mount("https://", _cloud_adapter)
 
+_local_session = requests.Session()
+_local_adapter = requests.adapters.HTTPAdapter(
+    max_retries=requests.packages.urllib3.util.retry.Retry(
+        total=1, backoff_factor=0.1, status_forcelist=[502, 503],
+    )
+)
+_local_session.mount("http://", _local_adapter)
+_local_healthy = True
+_local_health_check_at = 0.0
+_LOCAL_HEALTH_RECHECK = 30.0
+
 _KEYWORD_FALLBACK = [
     # (regex, category, issue, severity)
     (re.compile(r"\b(?:sem\s+(?:audio|áudio|som|narr))\b", re.I),         "AUDIO", "sem_audio",        "high"),
@@ -996,33 +1016,69 @@ def _counter_flush_loop():
             _log_debug(f"[counter_flush_loop] {e}")
 
 
+def _get_serving_endpoint(vid: str):
+    """Retorna (url, session, timeout) baseado na audiencia do video."""
+    global _local_healthy, _local_health_check_at
+    if not _local_healthy:
+        if time.time() - _local_health_check_at >= _LOCAL_HEALTH_RECHECK:
+            _local_health_check_at = time.time()
+            try:
+                r = _local_session.get(f"{LOCAL_SERVING_URL}/health", timeout=3)
+                if r.status_code == 200:
+                    _local_healthy = True
+                    _log_debug("[routing] CPU local recuperado")
+            except Exception:
+                pass
+        if not _local_healthy:
+            return SERVING_URL, _cloud_session, SERVING_TIMEOUT
+    viewers = _viewer_cache.get(vid)
+    if viewers is not None and viewers >= GPU_VIEWER_THRESHOLD:
+        return SERVING_URL, _cloud_session, SERVING_TIMEOUT
+    return LOCAL_SERVING_URL, _local_session, LOCAL_SERVING_TIMEOUT
+
+
 def _process_batch(items: list):
-    """Classifica em batch via Cloud Run GPU e salva tudo via Firestore WriteBatch."""
+    """Classifica em batch via CPU local ou Cloud Run GPU e salva via Firestore WriteBatch."""
     if not items:
         return
 
     # Itens que precisam de IA vs pré-filtrados
-    ai_items  = [it for it in items if it["needs_ai"]]
-    ai_texts  = [it["text"] for it in ai_items]
+    ai_items = [it for it in items if it["needs_ai"]]
 
-    # Chama /classify/batch — 1 request para N textos (GPU)
-    raw_results: list = []
-    if ai_texts and SERVING_URL:
+    # Agrupa por endpoint (CPU local ou Cloud Run GPU) baseado na audiencia
+    from collections import defaultdict
+    endpoint_groups: Dict[str, list] = defaultdict(list)
+    for it in ai_items:
+        url, _, _ = _get_serving_endpoint(it["vid"])
+        endpoint_groups[url].append(it)
+
+    ai_result_map: dict = {}
+    for url, group in endpoint_groups.items():
+        texts = [it["text"] for it in group]
+        _, session, timeout = _get_serving_endpoint(group[0]["vid"])
+        raw_results: list = []
         try:
-            r = _cloud_session.post(
-                f"{SERVING_URL}/classify/batch",
-                json={"texts": ai_texts},
-                timeout=SERVING_TIMEOUT,
-            )
+            r = session.post(f"{url}/classify/batch", json={"texts": texts}, timeout=timeout)
             r.raise_for_status()
             raw_results = r.json()
         except Exception as e:
-            _log_debug(f"[batch_classify] erro: {e}")
-
-    # Mapeia result por comment_id
-    ai_result_map: dict = {}
-    for i, it in enumerate(ai_items):
-        ai_result_map[it["comment_id"]] = raw_results[i] if i < len(raw_results) else None
+            _log_debug(f"[batch_classify] {url} erro: {e}")
+            if url == LOCAL_SERVING_URL:
+                global _local_healthy, _local_health_check_at
+                _local_healthy = False
+                _local_health_check_at = time.time()
+                _log_debug("[routing] CPU local unhealthy → tentando GPU")
+                try:
+                    r = _cloud_session.post(
+                        f"{SERVING_URL}/classify/batch",
+                        json={"texts": texts}, timeout=SERVING_TIMEOUT,
+                    )
+                    r.raise_for_status()
+                    raw_results = r.json()
+                except Exception as e2:
+                    _log_debug(f"[batch_classify] GPU fallback falhou: {e2}")
+        for i, it in enumerate(group):
+            ai_result_map[it["comment_id"]] = raw_results[i] if i < len(raw_results) else None
 
     # Firestore WriteBatch — salva comment docs + minutes de uma vez
     fs = _get_fs()
@@ -1092,9 +1148,8 @@ def _process_batch(items: list):
 
         # Agrega minuto
         ts_val    = it["ts"]
-        time_part = ts_val.split("T")[-1] if "T" in ts_val else ts_val.split(" ")[-1] if " " in ts_val else ts_val
-        minute_key = time_part[:5]
-        if minute_key and len(minute_key) == 5 and ":" in minute_key:
+        minute_key = ts_val[:16] if len(ts_val) >= 16 else ""
+        if minute_key and len(minute_key) == 16:
             batch.set(
                 live_ref.collection("minutes").document(minute_key),
                 {
@@ -1355,9 +1410,11 @@ if __name__ == "__main__":
 
     print("=" * 60)
     print("  Monitor de Lives — CazéTV")
-    print(f"  Cloud Run : {SERVING_URL or 'NAO CONFIGURADO — defina SERVING_URL'}")
-    print(f"  Firestore : {'ativo' if FIRESTORE_ENABLED else 'desativado'}")
-    print(f"  MP Start  : {start_method}")
+    print(f"  Cloud Run GPU : {SERVING_URL or 'NAO CONFIGURADO'}")
+    print(f"  CPU local     : {LOCAL_SERVING_URL}")
+    print(f"  Threshold GPU : {GPU_VIEWER_THRESHOLD:,} viewers")
+    print(f"  Firestore     : {'ativo' if FIRESTORE_ENABLED else 'desativado'}")
+    print(f"  MP Start      : {start_method}")
     print("=" * 60)
     for ch in CHANNELS:
         print(f"  Canal: {ch['display']} ({ch.get('handle', '')})")
