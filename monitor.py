@@ -59,6 +59,7 @@ OEMBED_CACHE_TTL   = 300
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 CHANNELS = [
     {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": ""},
+    {"display": "GETV", "name": "ge.tv", "handle": "@GETV", "channel_id": "UCgCKagVhzGnZcuP9bSMgMCg"},
 ]
 
 SUPERVISOR_POLL_SECONDS        = 15
@@ -83,7 +84,7 @@ CHAT_DEDUP_WINDOW              = 5000
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # IA — Cloud Run (DistilBERT fine-tuned)
-SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
+SERVING_URL     = os.environ.get("SERVING_URL", "https://SUA_URL_CLOUD_RUN")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
 
@@ -113,6 +114,7 @@ for k, v in COOKIE_CONSENT.items():
     SESSION.cookies.set(k, v, domain=".youtube.com")
 
 DEFAULT_PARAMS = {"hl": "pt-BR", "gl": "BR"}
+BR_TZ = timezone(timedelta(hours=-3))
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
 os.makedirs("debug_logs", exist_ok=True)
@@ -125,18 +127,99 @@ def _log_debug(msg: str):
         f.write(log_msg + "\n")
 
 # ─── FIRESTORE ───────────────────────────────────────────────────────────────
+def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
+    """Busca audiência atual via YouTube Data API v3 (1 unit de quota por chamada)."""
+    def _from_watch_initial_data(html: str) -> Optional[int]:
+        data = extract_json_blob(
+            html,
+            [
+                r"ytInitialData\s*=\s*(\{.*?\})\s*;",
+                r'"ytInitialData"\s*:\s*(\{.*?\})\s*,\s*"ytcfg"',
+            ],
+        )
+        if not isinstance(data, dict):
+            return None
+
+        stack = [data]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, dict):
+                vpr = cur.get("videoPrimaryInfoRenderer")
+                if isinstance(vpr, dict):
+                    vvr = ((vpr.get("viewCount") or {}).get("videoViewCountRenderer") or {})
+                    vc = vvr.get("viewCount") or {}
+                    txt = vc.get("simpleText") or ""
+                    if not txt and isinstance(vc.get("runs"), list):
+                        txt = "".join(str(r.get("text", "")) for r in vc["runs"] if isinstance(r, dict))
+                    if txt and re.search(r"(assistindo|watching)", txt, re.I):
+                        digits = re.sub(r"\D", "", txt)
+                        if digits:
+                            return int(digits)
+                for v in cur.values():
+                    stack.append(v)
+            elif isinstance(cur, list):
+                stack.extend(cur)
+        return None
+
+    if YOUTUBE_API_KEY:
+        try:
+            r = requests.get(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params={"part": "liveStreamingDetails", "id": video_id, "key": YOUTUBE_API_KEY},
+                timeout=8,
+            )
+            r.raise_for_status()
+            items = r.json().get("items", [])
+            if items:
+                cv = items[0].get("liveStreamingDetails", {}).get("concurrentViewers")
+                if cv:
+                    return int(cv)
+        except Exception as e:
+            _log_debug(f"[viewer_count] api erro: {e}")
+    # Fallback sem API: extrai da própria página da live.
+    # Não depende de quota/chave e evita travar audiência em valor antigo.
+    try:
+        html = safe_get(
+            f"https://www.youtube.com/watch?v={video_id}",
+            timeout=8,
+            allow_redirects=True
+        )
+        if html:
+            m = re.search(r'"concurrentViewers"\s*:\s*"(\d+)"', html)
+            if m:
+                return int(m.group(1))
+            cv_idata = _from_watch_initial_data(html)
+            if cv_idata is not None:
+                return cv_idata
+    except Exception as e:
+        _log_debug(f"[viewer_count] scrape erro: {e}")
+    return None
+
+# Controle de throttle: busca audiência no máximo a cada 60s por video
+_last_viewer_fetch: Dict[str, float] = {}
+VIEWER_FETCH_INTERVAL = 60.0
+
 def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: str = "active"):
     if not FIRESTORE_ENABLED: return
     try:
         fs = _get_fs()
         if not fs: return
-        fs.collection("lives").document(video_id).set({
+        upd: Dict[str, object] = {
             "channel":      channel,
             "title":        title,
             "url":          url,
             "status":       status,
             "last_seen_at": now_iso(),
-        }, merge=True)
+        }
+        # Audiência: busca apenas 1x por minuto para não estourar quota da API
+        now_t = time.time()
+        if now_t - _last_viewer_fetch.get(video_id, 0) >= VIEWER_FETCH_INTERVAL:
+            _last_viewer_fetch[video_id] = now_t
+            cv = _fetch_concurrent_viewers(video_id)
+            if cv is not None:
+                upd["concurrent_viewers"] = cv
+                _log_debug(f"[viewer_count] {video_id}: {cv:,}")
+        fs.collection("lives").document(video_id).set(upd, merge=True)
     except Exception as e:
         _log_debug(f"[Firestore] fs_upsert_live error: {e}")
 
@@ -210,8 +293,36 @@ def stop_monitor(channel_display: str, video_id: str):
 
 # ─── UTILS ───────────────────────────────────────────────────────────────────
 def now_iso() -> str:
-    br_tz = timezone(timedelta(hours=-3))
-    return datetime.now(br_tz).isoformat()
+    return datetime.now(BR_TZ).isoformat(timespec="milliseconds")
+
+def chat_ts_iso_brt(ts_raw_ms, ts_raw_str) -> Optional[str]:
+    """Normaliza timestamp do pytchat para ISO BRT consistente."""
+    try:
+        if isinstance(ts_raw_ms, (int, float)):
+            return datetime.fromtimestamp(ts_raw_ms / 1000, tz=BR_TZ).isoformat(timespec="milliseconds")
+    except Exception:
+        pass
+
+    try:
+        if isinstance(ts_raw_str, str) and ts_raw_str.strip():
+            raw = ts_raw_str.strip()
+            dt = None
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except Exception:
+                dt = None
+            if dt is None:
+                try:
+                    dt = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    dt = None
+            if dt is not None:
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(BR_TZ).isoformat(timespec="milliseconds")
+    except Exception:
+        pass
+    return None
 
 def safe_get(url: str, params: Optional[dict] = None, timeout: int = SCRAPE_TIMEOUT,
              allow_redirects: bool = True) -> Optional[str]:
@@ -721,22 +832,10 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
                         except Exception:
                             author = getattr(getattr(c, "author", None), "name", None) or "unknown"
                         msg = getattr(c, "message", "")
-                        ts_chat = None
-                        try:
-                            ts_raw_str = getattr(c, "datetime", None)
-                            if isinstance(ts_raw_str, str):
-                                # pytchat.c.datetime usa fromtimestamp() na VM (UTC)
-                                # — converter para BRT (UTC-3) antes de salvar
-                                dt_utc = datetime.strptime(ts_raw_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                                ts_chat = dt_utc.astimezone(timezone(timedelta(hours=-3))).strftime("%Y-%m-%d %H:%M:%S")
-                            else:
-                                ts_raw = getattr(c, "timestamp", None)
-                                if isinstance(ts_raw, (int, float)):
-                                    ts_chat = datetime.fromtimestamp(
-                                        ts_raw / 1000, tz=timezone(timedelta(hours=-3))
-                                    ).strftime("%Y-%m-%d %H:%M:%S")
-                        except Exception:
-                            ts_chat = None
+                        ts_chat = chat_ts_iso_brt(
+                            getattr(c, "timestamp", None),
+                            getattr(c, "datetime", None),
+                        )
 
                         sig = _sig(author, msg, ts_chat if isinstance(ts_chat, str) else None, mid)
                         if sig in recent_set:
@@ -1215,9 +1314,8 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
             time.sleep(10)
 
 # ─── BOOTSTRAP ───────────────────────────────────────────────────────────────
-# IMPORTANTE: q deve ser criado DEPOIS de mp.set_start_method("spawn") no __main__
-# Criar Queue antes do set_start_method causa SIGSEGV no processo filho (spawn mode)
-q = None  # inicializado em __main__ apos set_start_method (antes causava SIGSEGV)
+# q é inicializado no __main__ após definir start method.
+q = None
 
 def queue_consumer_bootstrap():
     # Um único dispatcher thread + ThreadPoolExecutor interno com LLM_WORKERS
@@ -1244,9 +1342,12 @@ def _graceful_shutdown(signum, frame):
 
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    mp.set_start_method("spawn", force=True)
+    # Linux: fork evita erro intermitente de SemLock no 2º monitor com spawn.
+    # Windows: mantém spawn.
+    start_method = "fork" if os.name != "nt" else "spawn"
+    mp.set_start_method(start_method, force=True)
 
-    # Queue criada DEPOIS de set_start_method para evitar SIGSEGV no processo filho
+    # Queue criada depois do set_start_method.
     q = Queue()
 
     signal.signal(signal.SIGINT,  _graceful_shutdown)
@@ -1256,6 +1357,7 @@ if __name__ == "__main__":
     print("  Monitor de Lives — CazéTV")
     print(f"  Cloud Run : {SERVING_URL or 'NAO CONFIGURADO — defina SERVING_URL'}")
     print(f"  Firestore : {'ativo' if FIRESTORE_ENABLED else 'desativado'}")
+    print(f"  MP Start  : {start_method}")
     print("=" * 60)
     for ch in CHANNELS:
         print(f"  Canal: {ch['display']} ({ch.get('handle', '')})")

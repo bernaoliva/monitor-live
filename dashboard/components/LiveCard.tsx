@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import {
   collection, onSnapshot, query, where,
   doc, updateDoc, increment,
@@ -238,6 +239,8 @@ export default function LiveCard({
     : lastCat === "REDE"  ? "rgba(251,146,60,0.9)"
     : lastCat === "GC"    ? "rgba(34,211,238,0.9)"
     : "rgba(239,68,68,0.9)"
+  const channelKey = (live.channel || "").toUpperCase()
+  const channelLogo = channelKey === "GETV" ? "/getv-logo.png" : channelKey === "CAZETV" ? "/cazetv-logo-branco.png" : null
 
   return (
     <div className={`panel overflow-hidden relative ${alertBorder}`}>
@@ -274,17 +277,33 @@ export default function LiveCard({
           <h3 className="font-bold text-white text-sm leading-snug line-clamp-2 pr-4">
             {live.title || live.video_id}
           </h3>
-          {live.url && (
-            <a
-              href={live.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-[10px] font-bold font-mono text-red-400/80 hover:text-red-300 transition-colors w-fit"
-              title="Abrir live no YouTube"
-            >
-              <Youtube size={12} />
-              YOUTUBE
-            </a>
+          {(channelLogo || live.url) && (
+            <div className="inline-flex items-center gap-2 pt-0.5 w-fit">
+              {channelLogo && (
+                <Image
+                  src={channelLogo}
+                  alt={live.channel || "canal"}
+                  width={channelKey === "GETV" ? 48 : 60}
+                  height={channelKey === "GETV" ? 14 : 18}
+                  className={channelKey === "GETV"
+                    ? "w-[48px] h-[14px] object-contain"
+                    : "w-[60px] h-[18px] object-contain"
+                  }
+                />
+              )}
+              {live.url && (
+                <a
+                  href={live.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-[10px] font-bold font-mono text-red-400/80 hover:text-red-300 transition-colors"
+                  title="Abrir live no YouTube"
+                >
+                  <Youtube size={12} />
+                  YOUTUBE
+                </a>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 pt-0.5">
