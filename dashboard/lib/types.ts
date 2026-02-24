@@ -1,4 +1,5 @@
 export type Severity = "none" | "low" | "medium" | "high"
+export type CardDensity = "full" | "compact" | "mini"
 
 export interface Live {
   video_id: string

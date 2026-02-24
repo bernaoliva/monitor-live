@@ -1,48 +1,27 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import Image from "next/image"
 import { collection, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live } from "@/lib/types"
 import LiveCard from "@/components/LiveCard"
 import { Tv2, Wifi, WifiOff, Activity } from "lucide-react"
-
-type ChannelName = "CAZETV" | "GETV"
+import { useChannels } from "@/lib/channel-context"
+import type { ChannelName } from "@/lib/channel-context"
 
 const CHANNELS: ChannelName[] = ["CAZETV", "GETV"]
-const CHANNEL_OPTIONS: Record<ChannelName, { logo: string; alt: string }> = {
-  CAZETV: { logo: "/cazetv-logo-branco.png", alt: "CazeTV" },
-  GETV: { logo: "/getv-logo.png", alt: "ge.tv" },
-}
 
 export default function HomePage() {
   const [lives, setLives]         = useState<Live[]>([])
   const [connected, setConnected] = useState(false)
   const [hidden, setHidden]       = useState<Set<string>>(new Set())
-  const [selectedChannels, setSelectedChannels] = useState<Record<ChannelName, boolean>>({
-    CAZETV: true,
-    GETV: true,
-  })
-  const orderRef                  = useRef<string[]>([])
+  const { selected: selectedChannels } = useChannels()
+  const orderRef = useRef<string[]>([])
 
-  // Carrega IDs ocultos e filtros de canal do localStorage apenas no cliente
+  // Carrega IDs ocultos do localStorage apenas no cliente
   useEffect(() => {
     try {
       setHidden(new Set(JSON.parse(localStorage.getItem("hidden_lives") ?? "[]")))
-      const savedSelected = JSON.parse(localStorage.getItem("channel_selected") ?? "null")
-      if (Array.isArray(savedSelected)) {
-        const next: Record<ChannelName, boolean> = { CAZETV: false, GETV: false }
-        for (const ch of savedSelected) {
-          if (ch === "CAZETV" || ch === "GETV") next[ch as ChannelName] = true
-        }
-        setSelectedChannels(next)
-      } else {
-        // Compatibilidade com versao anterior
-        const oldTab = localStorage.getItem("channel_tab")
-        if (oldTab === "CAZETV") setSelectedChannels({ CAZETV: true, GETV: false })
-        if (oldTab === "GETV") setSelectedChannels({ CAZETV: false, GETV: true })
-      }
     } catch {}
   }, [])
 
@@ -105,12 +84,15 @@ export default function HomePage() {
     ? []
     : activeAll.filter((l) => selectedList.includes((l.channel || "").toUpperCase() as ChannelName))
 
-  // Grid: 1 col para 1 live, 2 cols para 2, 3 cols para 3+
+  // Grid por quantidade de lives
   const gridCols =
     active.length <= 1 ? "" :
-    active.length === 2 ? "grid grid-cols-2 gap-4 items-start" :
-    active.length <= 6 ? "grid grid-cols-2 xl:grid-cols-3 gap-3 items-start" :
-    "grid grid-cols-2 xl:grid-cols-4 gap-3 items-start"
+    active.length === 2 ? "grid grid-cols-2 gap-4" :
+    active.length === 3 ? "grid grid-cols-3 gap-3" :
+    active.length === 4 ? "grid grid-cols-2 gap-3" :
+    active.length <= 6  ? "grid grid-cols-3 gap-2" :
+    active.length <= 8  ? "grid grid-cols-4 gap-2" :
+    "grid grid-cols-5 gap-2"
 
   return (
     <div className="space-y-5">
@@ -130,43 +112,6 @@ export default function HomePage() {
                     : `Aguardando streams em ${selectedList[0]}`}
             </p>
           </div>
-          <div className="flex flex-wrap items-end gap-4 ml-1">
-            {CHANNELS.map((ch) => (
-              <button
-                key={ch}
-                onClick={() => {
-                  setSelectedChannels((prev) => {
-                    const next = { ...prev, [ch]: !prev[ch] }
-                    try {
-                      localStorage.setItem(
-                        "channel_selected",
-                        JSON.stringify(CHANNELS.filter((k) => next[k]))
-                      )
-                    } catch {}
-                    return next
-                  })
-                }}
-                title={CHANNEL_OPTIONS[ch].alt}
-                aria-label={CHANNEL_OPTIONS[ch].alt}
-                className={`transition-all ${
-                  selectedChannels[ch]
-                    ? "opacity-100 scale-100"
-                    : "opacity-50 scale-95 hover:opacity-85 hover:scale-100"
-                }`}
-              >
-                <Image
-                  src={CHANNEL_OPTIONS[ch].logo}
-                  alt={CHANNEL_OPTIONS[ch].alt}
-                  width={120}
-                  height={36}
-                  className="w-[120px] h-[36px] object-contain"
-                />
-                <span className={`block mt-1 h-0.5 rounded-full transition-all ${
-                  selectedChannels[ch] ? "bg-emerald-400/90" : "bg-transparent"
-                }`} />
-              </button>
-            ))}
-          </div>
         </div>
         <div
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold font-mono tracking-wider ${
@@ -184,7 +129,12 @@ export default function HomePage() {
       {active.length > 0 && (
         <div className={`fade-d1 ${gridCols}`}>
           {active.map((live) => (
-            <LiveCard key={live.video_id} live={live} onDismiss={() => hideCard(live.video_id)} />
+            <LiveCard
+              key={live.video_id}
+              live={live}
+              liveCount={active.length}
+              onDismiss={() => hideCard(live.video_id)}
+            />
           ))}
         </div>
       )}

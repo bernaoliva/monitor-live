@@ -173,6 +173,19 @@ body {
 .comments-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
 .comments-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.32); }
 
+/* ─── Focus overlay (compact/mini card expansion) ─── */
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.focus-overlay { animation: overlay-in 0.2s ease-out forwards; }
+
+@keyframes card-pop {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.focus-card { animation: card-pop 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
 /* ─── Status indicator ─── */
 .status-live {
   position: relative;
