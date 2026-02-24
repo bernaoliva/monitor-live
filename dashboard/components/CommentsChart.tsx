@@ -24,7 +24,7 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (!active || !payload?.length) return null
   return (
     <div className="bg-[#1a1a24] border border-white/10 rounded-xl p-3 text-xs shadow-xl">
-      <p className="text-white/50 mb-2 font-mono">{label}</p>
+      <p className="text-white/50 mb-2 font-mono">{String(label).slice(-5)}</p>
       {payload.map((p) => (
         <div key={p.dataKey} className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full" style={{ background: p.color }} />

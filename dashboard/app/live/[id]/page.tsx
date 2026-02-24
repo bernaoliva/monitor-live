@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { doc, collection, onSnapshot, query, orderBy, where, limit, updateDoc, increment } from "firebase/firestore"
+import { doc, collection, onSnapshot, query, orderBy, where, limitToLast, updateDoc, increment } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentFeed from "@/components/CommentFeed"
@@ -15,13 +15,8 @@ import { ptBR } from "date-fns/locale"
 
 
 function minuteKeyFromTs(ts: string): string | null {
-  try {
-    const dt = new Date(ts.includes("T") ? ts : ts.replace(" ", "T"))
-    if (Number.isNaN(dt.getTime())) return null
-    return format(dt, "HH:mm")
-  } catch {
-    return null
-  }
+  const m = ts.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+  return m ? `${m[1]}T${m[2]}` : null
 }
 
 function normalizeCategory(raw: string | null | undefined): string | null {
@@ -116,11 +111,13 @@ export default function LivePage() {
       } satisfies Live)
     })
 
-    // Últimas 3000 mensagens para o feed "TODOS" (mais recentes primeiro)
+    // Últimas 3000 mensagens — limitToLast(asc) é o padrão correto para real-time:
+    // novos docs chegam sempre no final da coleção ascendente → listener sempre dispara.
+    // orderBy(desc)+limit é instável em alta frequência de escrita.
     const qFeed = query(
       collection(db, "lives", id, "comments"),
-      orderBy("ts", "desc"),
-      limit(3000)
+      orderBy("ts"),
+      limitToLast(3000)
     )
     const unsub2 = onSnapshot(qFeed, (snap) => {
       const data = snap.docs.map((d) => {
@@ -135,7 +132,7 @@ export default function LivePage() {
           issue:        raw.issue        ?? null,
           severity:     raw.severity     ?? "none",
         } satisfies Comment
-      })
+      }).reverse() // docs chegam em asc; reverter para mostrar mais recente primeiro
       allComments.current = data
       setComments(data)
     }, (err) => console.error("[Firestore] comments query error:", err))
@@ -146,7 +143,7 @@ export default function LivePage() {
       (snap) => {
         setChartPoints(
           snap.docs
-            .filter((d) => /^\d{2}:\d{2}$/.test(d.id))
+            .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))
             .map((d) => {
               const raw = d.data()
               return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0 } satisfies ChartPoint
