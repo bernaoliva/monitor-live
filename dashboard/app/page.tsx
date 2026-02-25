@@ -171,6 +171,7 @@ export default function HomePage() {
       onDragStart={() => setDraggingId(live.video_id)}
       onDragOver={(e: React.DragEvent) => { e.preventDefault(); setDragOverId(live.video_id) }}
       onDrop={(e: React.DragEvent) => { e.preventDefault(); if (draggingId && draggingId !== live.video_id) handleDrop(draggingId, live.video_id) }}
+      onDragEnd={() => { setDraggingId(null); setDragOverId(null) }}
     />
   )
 

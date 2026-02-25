@@ -154,6 +154,7 @@ function MockCard({
   onDragStart,
   onDragOver,
   onDrop,
+  onDragEnd,
 }: {
   live: MockLive
   liveCount: number
@@ -165,6 +166,7 @@ function MockCard({
   onDragStart: () => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
+  onDragEnd: () => void
 }) {
   const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : 125
   const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : 150
@@ -192,7 +194,7 @@ function MockCard({
       onDragStart={(e) => { e.dataTransfer.setData("text/plain", live.video_id); e.dataTransfer.effectAllowed = "move"; onDragStart() }}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onDragEnd={() => {}}
+      onDragEnd={onDragEnd}
       className={`panel overflow-hidden relative transition-opacity ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
       style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}
     >
@@ -384,6 +386,7 @@ export default function DevPreviewPage() {
       onDragStart={() => setDraggingId(live.video_id)}
       onDragOver={(e) => { e.preventDefault(); setDragOverId(live.video_id) }}
       onDrop={(e) => { e.preventDefault(); if (draggingId && draggingId !== live.video_id) handleDrop(draggingId, live.video_id) }}
+      onDragEnd={() => { setDraggingId(null); setDragOverId(null) }}
     />
   )
 

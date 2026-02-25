@@ -60,6 +60,7 @@ export default function LiveCard({
   onDragStart,
   onDragOver,
   onDrop,
+  onDragEnd,
 }: {
   live: Live
   onDismiss?: () => void
@@ -71,6 +72,7 @@ export default function LiveCard({
   onDragStart?: () => void
   onDragOver?: (e: React.DragEvent) => void
   onDrop?: (e: React.DragEvent) => void
+  onDragEnd?: () => void
 }) {
   // Alturas calibradas para caber em 1080p (header +12px por causa do subtítulo)
   const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : 125
@@ -246,6 +248,7 @@ export default function LiveCard({
       onDragStart={(e) => { e.dataTransfer.setData("text/plain", live.video_id); e.dataTransfer.effectAllowed = "move"; onDragStart?.() }}
       onDragOver={onDragOver}
       onDrop={onDrop}
+      onDragEnd={onDragEnd}
       className={`panel overflow-hidden relative transition-opacity ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
       style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}
     >
