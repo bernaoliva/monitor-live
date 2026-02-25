@@ -50,7 +50,8 @@ export default function LivePage() {
   const [chartPoints, setChartPoints]   = useState<ChartPoint[]>([])
   const [techComments, setTechComments] = useState<Comment[]>([])
   const [filter, setFilter]           = useState<"all" | "technical">("technical")
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const [dismissed, setDismissed]       = useState<Set<string>>(new Set())
+  const [dismissError, setDismissError] = useState(false)
   const allComments               = useRef<Comment[]>([])
 
   // Carrega dismissed do localStorage (mesmo key que o LiveCard)
@@ -88,6 +89,8 @@ export default function LivePage() {
       }
     } catch (e) {
       console.error("Erro ao descartar comentário:", e)
+      setDismissError(true)
+      setTimeout(() => setDismissError(false), 3000)
     }
   }
 
@@ -364,6 +367,11 @@ export default function LivePage() {
             </button>
           </div>
         </div>
+        {dismissError && (
+          <div className="px-4 py-1.5 text-[10px] text-red-400/70 font-mono bg-red-500/5 border-b border-red-500/10">
+            Erro ao descartar. Tente novamente.
+          </div>
+        )}
         <CommentFeed comments={displayed} onDismiss={dismissComment} />
       </div>
     </div>

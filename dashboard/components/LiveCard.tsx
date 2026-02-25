@@ -86,6 +86,7 @@ export default function LiveCard({
   const [dismissed,       setDismissed]       = useState<Set<string>>(new Set())
   const [alertKey,        setAlertKey]        = useState(0)
   const [titleWraps,      setTitleWraps]      = useState(false)
+  const [dismissError,    setDismissError]    = useState(false)
   const techSnapshotReadyRef = useRef(false)
   const titleRef = useRef<HTMLSpanElement>(null)
 
@@ -142,6 +143,8 @@ export default function LiveCard({
       }
     } catch (e) {
       console.error("Erro ao descartar comentário:", e)
+      setDismissError(true)
+      setTimeout(() => setDismissError(false), 3000)
     }
   }
 
@@ -367,6 +370,11 @@ export default function LiveCard({
             <span className="text-[8px] font-bold font-mono uppercase tracking-wider text-white/40">Problemas recentes</span>
             <span className="font-data text-[9px] text-white/25 ml-auto">{visibleComments.length}</span>
           </div>
+          {dismissError && (
+            <div className="px-3 py-1 text-[9px] text-red-400/70 font-mono bg-red-500/5 border-b border-red-500/10">
+              Erro ao descartar. Tente novamente.
+            </div>
+          )}
           <div className="overflow-y-auto comments-scroll" style={{ maxHeight: commentsMaxH }}>
             {visibleComments.length === 0 ? (
               <div className="px-3 py-3 text-[10px] text-white/20 font-mono">Nenhum problema detectado</div>
