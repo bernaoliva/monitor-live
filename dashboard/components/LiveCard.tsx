@@ -10,7 +10,7 @@ import {
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
-import { AlertTriangle, ArrowRight, X } from "lucide-react"
+import { AlertTriangle, ArrowRight, X, Pin } from "lucide-react"
 import { format } from "date-fns"
 
 
@@ -53,10 +53,24 @@ export default function LiveCard({
   live,
   onDismiss,
   liveCount = 1,
+  isPinned = false,
+  onPin,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragOver,
+  onDrop,
 }: {
   live: Live
   onDismiss?: () => void
   liveCount?: number
+  isPinned?: boolean
+  onPin?: () => void
+  isDragging?: boolean
+  isDragOver?: boolean
+  onDragStart?: () => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent) => void
 }) {
   // Alturas calibradas para caber em 1080p (header +12px por causa do subtítulo)
   const chartHeight  = liveCount <= 3 ? 175 : 125
@@ -227,7 +241,14 @@ export default function LiveCard({
     "0 0 8px rgba(255,255,255,0.08)"
 
   return (
-    <div className="panel overflow-hidden relative" style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}>
+    <div
+      draggable={!!onDragStart}
+      onDragStart={(e) => { e.dataTransfer.setData("text/plain", live.video_id); e.dataTransfer.effectAllowed = "move"; onDragStart?.() }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={`panel overflow-hidden relative transition-opacity ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
+      style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}
+    >
 
       {/* Flash ao detectar novo problema */}
       {alertKey > 0 && (
@@ -289,9 +310,13 @@ export default function LiveCard({
           >
             ABRIR <ArrowRight size={9} />
           </Link>
-          {onDismiss && (
-            <button onClick={onDismiss} className="text-white/20 hover:text-red-400/70 transition-colors">
-              <X size={11} />
+          {onPin && (
+            <button
+              onClick={onPin}
+              title={isPinned ? "Desafixar" : "Fixar no topo"}
+              className={`transition-colors ${isPinned ? "text-amber-400/80 hover:text-amber-300" : "text-white/20 hover:text-white/50"}`}
+            >
+              <Pin size={11} />
             </button>
           )}
         </div>

@@ -186,6 +186,10 @@ body {
 }
 .focus-card { animation: card-pop 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
+/* ─── Drag-and-drop ─── */
+.dragging { opacity: 0.4; transition: opacity 0.15s; }
+.drag-over { outline: 2px dashed rgba(255,255,255,0.18); outline-offset: -2px; border-radius: 8px; }
+
 /* ─── Status indicator ─── */
 .status-live {
   position: relative;

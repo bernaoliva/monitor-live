@@ -1,9 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { ArrowLeft, ArrowRight, AlertTriangle, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, AlertTriangle, Pin } from "lucide-react"
+import LayoutToolbar from "@/components/LayoutToolbar"
+import type { SortMode } from "@/lib/card-layout-context"
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,64 @@ const CHANNEL_LOGO: Record<string, { src: string; w: number; h: number }> = {
   GETV:   { src: "/getv-logo.png",          w: 120, h: 36 },
 }
 
+function formatViewers(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`
+  return String(n)
+}
+
+function gapFor(total: number): string {
+  return total >= 7 ? "gap-2" : total >= 4 ? "gap-3" : "gap-4"
+}
+
+function gridClass(n: number): string {
+  if (n <= 1) return ""
+  const gap = gapFor(n)
+  if (n === 2) return `grid grid-cols-2 ${gap}`
+  if (n === 3) return `grid grid-cols-3 ${gap}`
+  if (n === 4) return `grid grid-cols-2 ${gap}`
+  if (n <= 6)  return `grid grid-cols-3 ${gap}`
+  if (n <= 8)  return `grid grid-cols-4 ${gap}`
+  return `grid grid-cols-5 ${gap}`
+}
+
+function pinnedGridClass(pinnedCount: number, totalCount: number): string {
+  if (pinnedCount <= 1) return ""
+  const gap  = gapFor(totalCount)
+  const cols = Math.min(pinnedCount, 5)
+  return `grid grid-cols-${cols} ${gap}`
+}
+
+function splitUnpinned<T>(items: T[]): [T[], T[]] {
+  const full = Math.floor(items.length / 5) * 5
+  return [items.slice(0, full), items.slice(full)]
+}
+
+function innerGridClass(n: number): string {
+  if (n <= 1) return ""
+  if (n === 2) return "grid grid-cols-2 gap-3"
+  return "grid grid-cols-2 gap-2"
+}
+
+function sortLives(lives: MockLive[], mode: SortMode, manualOrder: string[]): MockLive[] {
+  if (mode === "manual") {
+    return [...lives].sort((a, b) => {
+      const ia = manualOrder.indexOf(a.video_id)
+      const ib = manualOrder.indexOf(b.video_id)
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+    })
+  }
+  if (mode === "cazetv-first") {
+    return [...lives].sort((a) => (a.channel === "CAZETV" ? -1 : 1))
+  }
+  if (mode === "getv-first") {
+    return [...lives].sort((a) => (a.channel === "GETV" ? -1 : 1))
+  }
+  return lives
+}
+
+// ── MockChart ─────────────────────────────────────────────────────────────────
+
 function MockChart({ height }: { height: number }) {
   return (
     <div style={{ height }} className="relative">
@@ -81,20 +141,43 @@ function MockChart({ height }: { height: number }) {
   )
 }
 
-function MockCard({ live, count }: { live: MockLive; count: number }) {
-  const chartHeight  = count <= 3 ? 175 : 125
-  const commentsMaxH = count <= 3 ? 190 : count <= 6 ? 138 : 150
+// ── MockCard ──────────────────────────────────────────────────────────────────
+
+function MockCard({
+  live,
+  liveCount,
+  isPinned,
+  onPin,
+  onDismiss,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDrop,
+}: {
+  live: MockLive
+  liveCount: number
+  isPinned: boolean
+  onPin: () => void
+  onDismiss: () => void
+  isDragging: boolean
+  isDragOver: boolean
+  onDragStart: () => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
+}) {
+  const chartHeight  = liveCount <= 3 ? 175 : 125
+  const commentsMaxH = liveCount <= 3 ? 190 : liveCount <= 6 ? 138 : 150
   const showCats    = true
-  const compactCats = count >= 4
+  const compactCats = liveCount >= 4
   const techRate    = Math.round((live.tech_count / Math.max(live.total_comments, 1)) * 100)
-  const denseHeader = count >= 9
+  const denseHeader = liveCount >= 9
   const channelKey  = live.channel.toUpperCase()
   const channelBorderColor =
     techRate > 15 ? "rgba(239,68,68,0.65)" :
     techRate > 5  ? "rgba(245,158,11,0.55)" :
     channelKey === "GETV" ? "rgba(16,185,129,0.50)" :
     "rgba(255,255,255,0.25)"
-
   const channelGlow =
     techRate > 15 ? "0 0 12px rgba(239,68,68,0.30)" :
     techRate > 5  ? "0 0 12px rgba(245,158,11,0.25)" :
@@ -104,7 +187,15 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
   const logo = CHANNEL_LOGO[channelKey]
 
   return (
-    <div className="panel overflow-hidden relative" style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}>
+    <div
+      draggable
+      onDragStart={(e) => { e.dataTransfer.setData("text/plain", live.video_id); e.dataTransfer.effectAllowed = "move"; onDragStart() }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={() => {}}
+      className={`panel overflow-hidden relative transition-opacity ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
+      style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]">
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -114,7 +205,7 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
           </div>
           <div className="min-w-0 flex-1">
             <span className={`font-bold text-white line-clamp-2 leading-tight block ${
-              (count >= 9 && live.title.length > 38) || (count >= 7 && live.title.length > 52)
+              (liveCount >= 9 && live.title.length > 38) || (liveCount >= 7 && live.title.length > 52)
                 ? "text-[11px]" : "text-[12px]"
             }`}>{live.title}</span>
             <div className="flex items-center gap-2 mt-0.5">
@@ -126,7 +217,7 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
                 <span className={`${denseHeader ? "text-[7px]" : "text-[8px]"} font-thin tracking-widest`}>YOUTUBE</span>
               </a>
               <span className={`${denseHeader ? "text-[9px]" : "text-[11px]"} text-white/80 font-mono`}>
-                {live.viewers >= 1_000_000 ? `${(live.viewers/1_000_000).toFixed(1)}M` : live.viewers >= 1_000 ? `${(live.viewers/1_000).toFixed(0)}k` : live.viewers} esp.
+                {formatViewers(live.viewers)} esp.
               </span>
               <span className={`${denseHeader ? "text-[9px]" : "text-[11px]"} font-mono font-bold text-red-400/80`}>
                 {live.tech_count} problemas
@@ -134,9 +225,15 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0 ml-2">
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
           <span className="flex items-center gap-0.5 text-[9px] font-bold font-mono text-white/30">ABRIR <ArrowRight size={9} /></span>
-          <button className="text-white/20"><X size={11} /></button>
+          <button
+            onClick={onPin}
+            title={isPinned ? "Desafixar" : "Fixar no topo"}
+            className={`transition-colors ${isPinned ? "text-amber-400/80 hover:text-amber-300" : "text-white/20 hover:text-white/50"}`}
+          >
+            <Pin size={11} />
+          </button>
         </div>
       </div>
 
@@ -155,11 +252,11 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
       {/* Pills de categoria — 4-6 lives */}
       {showCats && compactCats && (
         <div className="px-3 py-1.5 flex items-center gap-1.5 flex-wrap border-t border-white/[0.04]">
-          {MOCK_CATS.map(([cat, count]) => {
+          {MOCK_CATS.map(([cat, cnt]) => {
             const s = CAT_STYLE[cat] ?? CAT_DEFAULT
             return (
               <span key={cat} className={`text-[7px] font-bold font-mono px-1.5 py-0.5 rounded border ${s.bg} ${s.text} ${s.border}`}>
-                {cat} {count}
+                {cat} {cnt}
               </span>
             )
           })}
@@ -198,14 +295,14 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
         {showCats && !compactCats && (
           <div className="flex-[1] min-w-0 px-3 py-2.5 space-y-2">
             <p className="text-[7px] font-bold uppercase tracking-wider text-white/35">Por categoria</p>
-            {MOCK_CATS.map(([cat, count]) => {
+            {MOCK_CATS.map(([cat, cnt]) => {
               const s   = CAT_STYLE[cat] ?? CAT_DEFAULT
-              const pct = Math.round((count / CAT_TOTAL) * 100)
+              const pct = Math.round((cnt / CAT_TOTAL) * 100)
               return (
                 <div key={cat} className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className={`text-[7px] font-bold font-mono uppercase ${s.text}`}>{cat}</span>
-                    <span className={`font-data text-[9px] font-bold ${s.text}`}>{count}</span>
+                    <span className={`font-data text-[9px] font-bold ${s.text}`}>{cnt}</span>
                   </div>
                   <div className="h-1 bg-white/[0.06] rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: s.barColor }} />
@@ -225,22 +322,67 @@ function MockCard({ live, count }: { live: MockLive; count: number }) {
 const COUNTS = [1, 2, 3, 4, 5, 6, 8, 10]
 
 export default function DevPreviewPage() {
-  const [count, setCount] = useState(2)
-  const lives = MOCK_LIVES.slice(0, count)
+  const [count, setCount]         = useState(4)
+  const [sortMode, setSortMode]   = useState<SortMode>("manual")
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
+  const [manualOrder, setManualOrder] = useState<string[]>(MOCK_LIVES.map((l) => l.video_id))
+  const [draggingId, setDraggingId]   = useState<string | null>(null)
+  const [dragOverId, setDragOverId]   = useState<string | null>(null)
+  const [dismissed, setDismissed]     = useState<Set<string>>(new Set())
 
-  const gridCols =
-    count <= 1 ? "" :
-    count === 2 ? "grid grid-cols-2 gap-4" :
-    count === 3 ? "grid grid-cols-3 gap-3" :
-    count === 4 ? "grid grid-cols-2 gap-3" :
-    count <= 6  ? "grid grid-cols-3 gap-2" :
-    count <= 8  ? "grid grid-cols-4 gap-2" :
-    "grid grid-cols-5 gap-2"
+  const allLives = MOCK_LIVES.slice(0, count).filter((l) => !dismissed.has(l.video_id))
+
+  // Sort
+  const sorted = sortMode === "split-lr"
+    ? allLives
+    : sortLives(allLives, sortMode, manualOrder)
+
+  const pinned   = sorted.filter((l) => pinnedIds.includes(l.video_id))
+  const unpinned = sorted.filter((l) => !pinnedIds.includes(l.video_id))
+
+  const togglePin = useCallback((id: string) => {
+    setPinnedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  }, [])
+
+  const handleDrop = useCallback((fromId: string, toId: string) => {
+    setManualOrder((prev) => {
+      const order = [...prev]
+      const fromIdx = order.indexOf(fromId)
+      const toIdx   = order.indexOf(toId)
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev
+      order.splice(fromIdx, 1)
+      order.splice(toIdx, 0, fromId)
+      return order
+    })
+    setSortMode("manual")
+    setDraggingId(null)
+    setDragOverId(null)
+  }, [])
 
   const modeLabel =
     count <= 3 ? "categorias laterais + gráfico 175px" :
     count <= 6 ? "pills de categoria + gráfico 125px" :
     "sem categorias + gráfico 125px"
+
+  // Split-LR
+  const cazeLives = allLives.filter((l) => l.channel === "CAZETV")
+  const getvLives = allLives.filter((l) => l.channel === "GETV")
+
+  const renderCard = (live: MockLive, liveCount: number) => (
+    <MockCard
+      key={live.video_id}
+      live={live}
+      liveCount={liveCount}
+      isPinned={pinnedIds.includes(live.video_id)}
+      onPin={() => togglePin(live.video_id)}
+      onDismiss={() => setDismissed((prev) => new Set([...prev, live.video_id]))}
+      isDragging={draggingId === live.video_id}
+      isDragOver={dragOverId === live.video_id}
+      onDragStart={() => setDraggingId(live.video_id)}
+      onDragOver={(e) => { e.preventDefault(); setDragOverId(live.video_id) }}
+      onDrop={(e) => { e.preventDefault(); if (draggingId && draggingId !== live.video_id) handleDrop(draggingId, live.video_id) }}
+    />
+  )
 
   return (
     <div className="space-y-4 fade-up">
@@ -257,7 +399,7 @@ export default function DevPreviewPage() {
             {COUNTS.map((n) => (
               <button
                 key={n}
-                onClick={() => setCount(n)}
+                onClick={() => { setCount(n); setPinnedIds([]); setDismissed(new Set()) }}
                 className={`w-7 h-7 rounded text-[11px] font-bold font-mono transition-all ${
                   count === n ? "bg-white/15 text-white" : "bg-white/[0.04] text-white/35 hover:bg-white/[0.08] hover:text-white/60"
                 }`}
@@ -269,12 +411,74 @@ export default function DevPreviewPage() {
         </div>
       </div>
 
-      {/* Grid */}
-      <div className={gridCols}>
-        {lives.map((live) => (
-          <MockCard key={live.video_id} live={live} count={count} />
-        ))}
-      </div>
+      {/* Toolbar de organização */}
+      <LayoutToolbar
+        sortMode={sortMode}
+        onSortChange={setSortMode}
+        pinnedCount={pinned.length}
+      />
+
+      {/* Cards fixados no topo */}
+      {pinned.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[8px] font-mono text-amber-400/40 uppercase tracking-widest flex items-center gap-1.5">
+            <Pin size={7} /> Fixados ({pinned.length})
+          </p>
+          <div className={pinnedGridClass(pinned.length, allLives.length)}>
+            {pinned.map((live) => renderCard(live, allLives.length))}
+          </div>
+        </div>
+      )}
+
+      {/* Grid principal */}
+      {sortMode === "split-lr" ? (
+        <div className="flex gap-4">
+          {/* CazeTV — lado esquerdo */}
+          <div className="flex-1 space-y-2 min-w-0">
+            <p className="text-[9px] font-mono text-white/25 uppercase tracking-widest">CazeTV</p>
+            <div className={innerGridClass(cazeLives.length)}>
+              {cazeLives.map((live) => renderCard(live, allLives.length))}
+            </div>
+          </div>
+          {/* GETV — lado direito */}
+          <div className="flex-1 space-y-2 min-w-0">
+            <p className="text-[9px] font-mono text-emerald-400/35 uppercase tracking-widest">ge.tv</p>
+            <div className={innerGridClass(getvLives.length)}>
+              {getvLives.map((live) => renderCard(live, allLives.length))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        unpinned.length > 0 && (() => {
+          if (pinned.length === 0) {
+            return (
+              <div className={gridClass(unpinned.length)}>
+                {unpinned.map((live) => renderCard(live, allLives.length))}
+              </div>
+            )
+          }
+          const gap = gapFor(allLives.length)
+          const [fullRows, lastRow] = splitUnpinned(unpinned)
+          return (
+            <div className={`flex flex-col ${gap}`}>
+              {fullRows.length > 0 && (
+                <div className={`grid grid-cols-5 ${gap}`}>
+                  {fullRows.map((live) => renderCard(live, allLives.length))}
+                </div>
+              )}
+              {lastRow.length > 0 && (
+                <div className={`grid grid-cols-${lastRow.length} ${gap}`}>
+                  {lastRow.map((live) => renderCard(live, allLives.length))}
+                </div>
+              )}
+            </div>
+          )
+        })()
+      )}
+
+      {allLives.length === 0 && (
+        <p className="text-white/20 text-xs text-center py-8 font-mono">Nenhuma live visível</p>
+      )}
     </div>
   )
 }
