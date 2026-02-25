@@ -9,17 +9,17 @@ import type { SortMode } from "@/lib/card-layout-context"
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 
-type MockComment = { id: string; text: string; ts: string; category: string; severity: string }
+type MockComment = { id: string; author: string; text: string; ts: string; category: string; severity: string }
 type MockLive    = { video_id: string; title: string; channel: string; total_comments: number; tech_count: number; viewers: number }
 
 const MOCK_COMMENTS: MockComment[] = [
-  { id: "1", text: "sem áudio na transmissão",    ts: "21:14", category: "AUDIO", severity: "high"   },
-  { id: "2", text: "tela preta aqui também",       ts: "21:13", category: "VIDEO", severity: "high"   },
-  { id: "3", text: "caiu de novo pra mim",         ts: "21:12", category: "REDE",  severity: "medium" },
-  { id: "4", text: "placar sumiu do vídeo",        ts: "21:11", category: "GC",    severity: "low"    },
-  { id: "5", text: "buffering constante aqui",     ts: "21:10", category: "REDE",  severity: "medium" },
-  { id: "6", text: "travou aqui pra mim",          ts: "21:09", category: "VIDEO", severity: "low"    },
-  { id: "7", text: "áudio voltou mas tá atrasado", ts: "21:08", category: "AUDIO", severity: "medium" },
+  { id: "1", author: "GabrielSR10",     text: "sem áudio na transmissão, tá completamente mudo aqui desde o início do segundo tempo",    ts: "21:14", category: "AUDIO", severity: "high"   },
+  { id: "2", author: "torcedor_fiel",   text: "tela preta aqui também",       ts: "21:13", category: "VIDEO", severity: "high"   },
+  { id: "3", author: "marcos_rj",       text: "caiu de novo pra mim",         ts: "21:12", category: "REDE",  severity: "medium" },
+  { id: "4", author: "Juliana_Fonseca", text: "o placar sumiu do vídeo e não voltou mais, já faz uns 10 minutos assim", ts: "21:11", category: "GC", severity: "low" },
+  { id: "5", author: "pedrohenrique99", text: "buffering constante aqui",     ts: "21:10", category: "REDE",  severity: "medium" },
+  { id: "6", author: "Ze_do_Gol",       text: "travou aqui pra mim",          ts: "21:09", category: "VIDEO", severity: "low"    },
+  { id: "7", author: "anaclara_sp",     text: "áudio voltou mas tá atrasado", ts: "21:08", category: "AUDIO", severity: "medium" },
 ]
 
 const MOCK_CATS: Array<[string, number]> = [["AUDIO", 12], ["VIDEO", 8], ["REDE", 5], ["GC", 3]]
@@ -166,8 +166,8 @@ function MockCard({
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
 }) {
-  const chartHeight  = liveCount <= 3 ? 175 : 125
-  const commentsMaxH = liveCount <= 3 ? 190 : liveCount <= 6 ? 138 : 150
+  const chartHeight  = liveCount === 1 ? 260 : liveCount === 2 ? 210 : liveCount <= 3 ? 175 : 125
+  const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : 150
   const showCats    = true
   const compactCats = liveCount >= 4
   const techRate    = Math.round((live.tech_count / Math.max(live.total_comments, 1)) * 100)
@@ -279,9 +279,12 @@ function MockCard({
                   <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${s.leftBar}`} />
                   <span className={`block w-1 h-1 rounded-full shrink-0 mt-1.5 ${SEV_DOT[c.severity] ?? "bg-white/20"}`} />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className={`text-[7px] font-bold font-mono shrink-0 ${s.text}`}>{c.category}</span>
-                      <span className="text-[9px] text-white/70 font-mono font-bold shrink-0 ml-auto">{c.ts}:00</span>
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[9px] text-white/50 font-mono truncate">{c.author}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className={`text-[7px] font-bold font-mono ${s.text}`}>{c.category}</span>
+                        <span className="text-[9px] text-white/70 font-mono font-bold">{c.ts}:00</span>
+                      </div>
                     </div>
                     <span className="text-[11px] text-white/65 break-words leading-tight block">{c.text}</span>
                   </div>

@@ -73,8 +73,8 @@ export default function LiveCard({
   onDrop?: (e: React.DragEvent) => void
 }) {
   // Alturas calibradas para caber em 1080p (header +12px por causa do subtítulo)
-  const chartHeight  = liveCount <= 3 ? 175 : 125
-  const commentsMaxH = liveCount <= 3 ? 190 : liveCount <= 6 ? 138 : 150
+  const chartHeight  = liveCount === 1 ? 260 : liveCount === 2 ? 210 : liveCount <= 3 ? 175 : 125
+  const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : 150
   const showCats     = true              // categorias sempre visíveis
   const compactCats  = liveCount >= 4   // pills em vez de barras laterais
   const denseHeader  = liveCount >= 9   // 5 colunas — header ultra-compacto
@@ -379,13 +379,12 @@ export default function LiveCard({
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
                     <span className={`block w-1 h-1 rounded-full shrink-0 mt-1.5 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        {catKey && (
-                          <span className={`text-[7px] font-bold font-mono shrink-0 ${catStyle.text}`}>{catKey}</span>
-                        )}
-                        <span className="text-[9px] text-white/70 font-mono font-bold shrink-0 ml-auto">
-                          {format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}
-                        </span>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-[9px] text-white/50 font-mono truncate">{c.author}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {catKey && <span className={`text-[7px] font-bold font-mono ${catStyle.text}`}>{catKey}</span>}
+                          <span className="text-[9px] text-white/70 font-mono font-bold">{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
+                        </div>
                       </div>
                       <span className="text-[11px] text-white/65 break-words leading-tight block">{c.text}</span>
                     </div>
