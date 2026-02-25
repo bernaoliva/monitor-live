@@ -166,7 +166,7 @@ function MockCard({
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
 }) {
-  const chartHeight  = liveCount === 1 ? 260 : liveCount === 2 ? 210 : liveCount <= 3 ? 175 : 125
+  const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : 125
   const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : 150
   const showCats    = true
   const compactCats = liveCount >= 4
