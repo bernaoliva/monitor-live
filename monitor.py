@@ -63,7 +63,7 @@ CHANNELS = [
     {"display": "GETV", "name": "ge.tv", "handle": "@GETV", "channel_id": "UCgCKagVhzGnZcuP9bSMgMCg"},
 ]
 
-SUPERVISOR_POLL_SECONDS        = 15
+SUPERVISOR_POLL_SECONDS        = 60
 CHAT_RETRY_SECONDS             = 10
 QUEUE_POLL_SECONDS             = 0.5
 LIVE_MAX_RESULTS               = 12
