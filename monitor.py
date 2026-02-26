@@ -58,7 +58,8 @@ OEMBED_CACHE_TTL   = 300
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 CHANNELS = [
-    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": ""},
+    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": "",
+     "extra_handles": ["@cazetvdois"]},
     {"display": "GETV", "name": "ge.tv", "handle": "@GETV", "channel_id": "UCgCKagVhzGnZcuP9bSMgMCg"},
 ]
 
@@ -1359,7 +1360,8 @@ def _load_active_from_firestore(channel_display: str):
         _log_debug(f"[_load_active_from_firestore] erro: {e}")
 
 def channel_supervisor_loop(channel_display: str, name: str, handle: str,
-                            preset_channel_id: str, queue: Queue):
+                            preset_channel_id: str, queue: Queue,
+                            extra_handles: list | None = None):
     _log_debug(f"[{channel_display}] supervisor iniciado")
     channel_id = (preset_channel_id.strip() if preset_channel_id else "") or ""
     if not channel_id and handle:
@@ -1378,6 +1380,13 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
         try:
             t0    = time.time()
             lives = list_live_videos_any(handle, channel_id, max_results=LIVE_MAX_RESULTS)
+            # Varrer canais secundários (ex: CazéTV Dois) e agregar no mesmo grupo
+            for eh in (extra_handles or []):
+                extra = list_live_videos_any(eh, "", max_results=LIVE_MAX_RESULTS)
+                seen_vids = {v for v, _ in lives}
+                for vid, ttl in extra:
+                    if vid not in seen_vids:
+                        lives.append((vid, ttl))
             dt    = time.time() - t0
             _log_debug(f"[{channel_display}] varredura em {dt:.1f}s — {len(lives)} live(s)")
 
@@ -1455,6 +1464,7 @@ def supervisors_bootstrap():
         Thread(
             target=channel_supervisor_loop,
             args=(ch["display"], ch["name"], ch.get("handle", ""), ch.get("channel_id", ""), q),
+            kwargs={"extra_handles": ch.get("extra_handles", [])},
             daemon=True,
         ).start()
 
