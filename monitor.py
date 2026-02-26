@@ -655,13 +655,30 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 _log_debug(f"[list_live_videos_any] fallback erro: {e}")
 
         # C) /live (redirect)
+        # ATENÇÃO: o endpoint /live também redireciona para streams agendados ("aguardando").
+        # Verificar via InnerTube antes de incluir.
         live_urls = []
         if h:   live_urls.append(f"https://www.youtube.com/@{h}/live")
         if cid: live_urls.append(f"https://www.youtube.com/channel/{cid}/live")
         for u in live_urls:
             got = _try_live_endpoint(u)
-            if got and got[0] not in collected_ids:
-                collected_ids.append(got[0])
+            if not got or got[0] in collected_ids:
+                continue
+            vid_c = got[0]
+            try:
+                r2 = SESSION.post(
+                    "https://www.youtube.com/youtubei/v1/updated_metadata",
+                    params={"key": _INNERTUBE_KEY},
+                    json={"videoId": vid_c, "context": _INNERTUBE_CTX},
+                    timeout=5,
+                )
+                actions = r2.json().get("actions", []) if r2.status_code == 200 else []
+                if not _innertube_is_live(actions):
+                    _log_debug(f"[list_live_videos_any] /live descartado (não transmitindo): {vid_c}")
+                    continue
+            except Exception:
+                pass  # dúvida: incluir
+            collected_ids.append(vid_c)
 
         # E) RSS feed + oembed + InnerTube — fallback quando scraping retorna 0
         # oembed verifica título; InnerTube updated_metadata confirma se está ao vivo
