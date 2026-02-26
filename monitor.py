@@ -58,7 +58,7 @@ OEMBED_CACHE_TTL   = 300
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 CHANNELS = [
-    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": "",
+    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": "UCZiYbVptd3PVPf4f6eR6UaQ",
      "extra_handles": ["@cazetvdois"]},
     {"display": "GETV", "name": "ge.tv", "handle": "@GETV", "channel_id": "UCgCKagVhzGnZcuP9bSMgMCg"},
 ]
@@ -66,11 +66,14 @@ CHANNELS = [
 SUPERVISOR_POLL_SECONDS        = 15
 CHAT_RETRY_SECONDS             = 10
 QUEUE_POLL_SECONDS             = 0.5
-LIVE_MAX_RESULTS               = 20
+LIVE_MAX_RESULTS               = 12
 MISS_TOLERANCE                 = 1
+ACTIVE_RESTORE_MAX_AGE_MIN     = int(os.environ.get("ACTIVE_RESTORE_MAX_AGE_MIN", "20"))
+INVALID_VIDEO_COOLDOWN         = int(os.environ.get("INVALID_VIDEO_COOLDOWN", "900"))
 
 WATCH_VERIFY_TIMEOUT           = 10
 SCRAPE_TIMEOUT                 = 15
+RATE_LIMIT_COOLDOWN           = int(os.environ.get("RATE_LIMIT_COOLDOWN", "60"))
 
 CHAT_MAX_DRAIN_CYCLES          = 64
 CHAT_MAX_BATCH_PER_DRAIN       = 500
@@ -182,14 +185,26 @@ def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
                     return int(cv)
         except Exception as e:
             _log_debug(f"[viewer_count] api erro: {e}")
+    # Se o IP estiver rate-limited pelo YouTube, evita chamadas de watch aqui.
+    # Isso impede extender o bloqueio global e ajuda a varredura voltar.
+    if time.time() < _rate_limited_until:
+        return _viewer_cache.get(video_id)
+
     # Fallback sem API: extrai da própria página da live.
-    # Não depende de quota/chave e evita travar audiência em valor antigo.
+    # Importante: não usa safe_get para não contaminar o rate-limit global
+    # da varredura de lives.
     try:
-        html = safe_get(
+        p = dict(DEFAULT_PARAMS)
+        r = SESSION.get(
             f"https://www.youtube.com/watch?v={video_id}",
+            params=p,
             timeout=8,
-            allow_redirects=True
+            allow_redirects=True,
         )
+        if r.status_code == 429:
+            return _viewer_cache.get(video_id)
+        r.raise_for_status()
+        html = r.text
         if html:
             m = re.search(r'"concurrentViewers"\s*:\s*"(\d+)"', html)
             if m:
@@ -212,13 +227,15 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
     try:
         fs = _get_fs()
         if not fs: return
+        resolved_title = _best_title(video_id, title)
         upd: Dict[str, object] = {
             "channel":      channel,
-            "title":        title,
             "url":          url,
             "status":       status,
             "last_seen_at": now_iso(),
         }
+        if resolved_title:
+            upd["title"] = resolved_title
         # Audiência: busca apenas 1x por minuto para não estourar quota da API
         now_t = time.time()
         if now_t - _last_viewer_fetch.get(video_id, 0) >= VIEWER_FETCH_INTERVAL:
@@ -288,6 +305,7 @@ def fs_mark_live_ended(video_id: str):
 running_monitors:    Dict[Tuple[str, str], Process] = {}
 last_start_attempt:  Dict[Tuple[str, str], float]   = {}
 active_videos:       Dict[str, Set[str]]             = {}  # channel_display → video_ids ativos
+invalid_video_until: Dict[Tuple[str, str], float]    = {}  # (channel_display, video_id) -> epoch cooldown
 state_lock = Lock()
 
 def stop_monitor(channel_display: str, video_id: str):
@@ -334,8 +352,30 @@ def chat_ts_iso_brt(ts_raw_ms, ts_raw_str) -> Optional[str]:
         pass
     return None
 
+_rate_limited_until: float = 0.0  # epoch seconds; > time.time() → IP bloqueado pelo YouTube
+_title_cache: Dict[str, str] = {}
+
+def _is_good_title(video_id: str, title: Optional[str]) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return False
+    if t == video_id:
+        return False
+    # Evita gravar um ID de video no campo de titulo.
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", t):
+        return False
+    return True
+
+def _best_title(video_id: str, candidate: Optional[str]) -> str:
+    if _is_good_title(video_id, candidate):
+        t = (candidate or "").strip()
+        _title_cache[video_id] = t
+        return t
+    return _title_cache.get(video_id, "")
+
 def safe_get(url: str, params: Optional[dict] = None, timeout: int = SCRAPE_TIMEOUT,
              allow_redirects: bool = True) -> Optional[str]:
+    global _rate_limited_until
     try:
         p = dict(DEFAULT_PARAMS)
         if params: p.update(params)
@@ -347,11 +387,15 @@ def safe_get(url: str, params: Optional[dict] = None, timeout: int = SCRAPE_TIME
             r.raise_for_status()
         return r.text
     except Exception as e:
+        if "429" in str(e) or (hasattr(e, "response") and getattr(e.response, "status_code", 0) == 429):
+            _rate_limited_until = max(_rate_limited_until, time.time() + RATE_LIMIT_COOLDOWN)
         _log_debug(f"safe_get error for {url}: {e}")
         return None
 
 @functools.lru_cache(maxsize=64)
 def oembed_title(video_id: str) -> str:
+    if time.time() < _rate_limited_until:
+        return video_id  # IP bloqueado — não fazer chamada HTTP
     try:
         o = SESSION.get(
             "https://www.youtube.com/oembed",
@@ -406,11 +450,17 @@ def extract_json_blob(html, patterns):
             except Exception: pass
     return None
 
-def is_live_now(video_id: str, expected_channel_id: str = ""):
+def is_live_now(video_id: str, expected_channel_id: str = "", assume_live_on_error: bool = False):
     """Verifica se um video_id está AO VIVO. Retorna (bool_is_live, title).
-    Se expected_channel_id for informado, rejeita vídeos de outros canais."""
+    Se expected_channel_id for informado, rejeita vídeos de outros canais.
+    Se assume_live_on_error=True e o IP estiver rate-limited, retorna (True, None) SEM
+    fazer HTTP — evita matar lives conhecidas E evita empiorar o rate-limiting."""
+    if assume_live_on_error and time.time() < _rate_limited_until:
+        return (True, None)  # IP bloqueado — não chamar o watch endpoint
     html = safe_get("https://www.youtube.com/watch", params={"v": video_id}, timeout=WATCH_VERIFY_TIMEOUT)
     if not html:
+        if assume_live_on_error and time.time() < _rate_limited_until:
+            return (True, None)
         return (False, None)
     if expected_channel_id:
         m_ch = re.search(r'"channelId"\s*:\s*"([A-Za-z0-9_-]+)"', html)
@@ -485,10 +535,6 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
         ],
     )
     if not isinstance(data, dict):
-        for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', html):
-            vid = m.group(1)
-            if vid not in out:
-                out.append(vid)
         return out
 
     def walk(obj):
@@ -549,8 +595,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             if r is not None and r.is_redirect:
                 vid = _extract_vid_from_url(r.headers.get("Location", ""))
                 if vid:
-                    ok, title = is_live_now(vid)
-                    if ok: return (vid, title or oembed_title(vid))
+                    return (vid, _best_title(vid, ""))
         except Exception as e:
             _log_debug(f"[_try_live_endpoint] no-redirect erro: {e}")
         try:
@@ -558,16 +603,14 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             if r is not None and r.url:
                 vid = _extract_vid_from_url(r.url)
                 if vid:
-                    ok, title = is_live_now(vid)
-                    if ok: return (vid, title or oembed_title(vid))
+                    return (vid, _best_title(vid, ""))
         except Exception as e:
             _log_debug(f"[_try_live_endpoint] follow-redirect erro: {e}")
         try:
             html = safe_get(url, timeout=SCRAPE_TIMEOUT, allow_redirects=True)
             if html:
                 for vid in _extract_live_video_ids_from_html(html):
-                    ok, title = is_live_now(vid)
-                    if ok: return (vid, title or oembed_title(vid))
+                    return (vid, _best_title(vid, ""))
                 # YouTube /live parou de redirecionar — extrai videoId do canonical link
                 for pat in [
                     r'"canonical"[^>]*?watch\?v=([A-Za-z0-9_-]{11})',
@@ -576,14 +619,18 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                     m = re.search(pat, html)
                     if m:
                         vid = m.group(1)
-                        ok, title = is_live_now(vid)
-                        if ok: return (vid, title or oembed_title(vid))
+                        return (vid, _best_title(vid, ""))
                         break
         except Exception as e:
             _log_debug(f"[_try_live_endpoint] parse erro: {e}")
         return None
 
     try:
+        # Se o IP está rate-limited, evitar qualquer chamada HTTP (YouTube vai 429 tudo)
+        # O recovery loop do supervisor vai manter as lives conhecidas via assume_live_on_error
+        if time.time() < _rate_limited_until:
+            return []
+
         h   = (handle or "").strip().lstrip("@")
         cid = (channel_id or "").strip()
         if not cid and h:
@@ -592,17 +639,12 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
         # A) Listagem "só lives"
         collected_ids: List[str] = []
         def _collect_from_live_filter_page(url: str) -> List[str]:
-            """Extrai IDs da página de filtro de lives; faz fallback para regex bruta
-            se o ytInitialData não tiver badges LIVE (YouTube muda a estrutura)."""
+            """Extrai IDs da página de filtro de lives usando badges/overlay LIVE."""
             page_html = safe_get(url, timeout=SCRAPE_TIMEOUT)
             if not page_html:
                 return []
             ids = _extract_live_video_ids_from_html(page_html)
-            if ids:
-                return ids
-            # Fallback: qualquer videoId na página (confirmação via is_live_now depois)
-            raw = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', page_html)]
-            return list(dict.fromkeys(raw))
+            return ids
 
         if h:
             collected_ids.extend(_collect_from_live_filter_page(
@@ -623,8 +665,6 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 html = safe_get(url, timeout=SCRAPE_TIMEOUT)
                 if not html: continue
                 ids = _extract_live_video_ids_from_html(html)
-                if not ids:
-                    ids = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', html)]
                 for vid in ids:
                     if vid not in collected_ids:
                         collected_ids.append(vid)
@@ -640,31 +680,37 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             if got and got[0] not in collected_ids:
                 collected_ids.append(got[0])
 
-        # Confirma ao vivo e pega título
-        lives_found: List[Tuple[str, str]] = []
-        checked_ids: Set[str] = set(collected_ids[:max_results])
-        for vid in collected_ids[:max_results]:
-            ok, title = is_live_now(vid)
-            if ok:
-                lives_found.append((vid, title or oembed_title(vid)))
-
-        # D) Para cada live confirmada, verifica IDs linkados na página de watch
-        #    Detecta streams simultâneas em canais que transmitem múltiplos jogos
-        #    (ex: GETV com MULTITELA + streams individuais de cada partida)
-        for vid, _ in list(lives_found):
+        # E) RSS feed + oembed title check — fallback quando scraping retorna 0
+        # Confiável mesmo com rate-limit no /watch: oembed é endpoint separado.
+        # Heurística: CazeTV e GETV prefixam todos os lives com "AO VIVO" no título.
+        if not collected_ids and cid:
             try:
-                whtml = safe_get(f"https://www.youtube.com/watch?v={vid}", timeout=SCRAPE_TIMEOUT)
-                if not whtml:
-                    continue
-                linked = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', whtml)]
-                new_ids = [x for x in dict.fromkeys(linked) if x != vid and x not in checked_ids]
-                for extra in new_ids[:5]:  # limita a 5 novos IDs por live confirmada
-                    checked_ids.add(extra)
-                    ok, title = is_live_now(extra, expected_channel_id=cid)
-                    if ok:
-                        lives_found.append((extra, title or oembed_title(extra)))
+                rss = SESSION.get(
+                    f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}",
+                    timeout=5,
+                )
+                if rss.status_code == 200:
+                    rss_ids = re.findall(r"<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>", rss.text)
+                    for rss_vid in rss_ids[:15]:
+                        if rss_vid in collected_ids:
+                            continue
+                        ttl = oembed_title(rss_vid)
+                        if re.match(r"^AO VIVO", ttl, re.I):
+                            collected_ids.append(rss_vid)
+                            _title_cache[rss_vid] = ttl  # evita segunda chamada oembed
+                            _log_debug(f"[list_live_videos_any] RSS+oembed live: {rss_vid} — {ttl}")
             except Exception as e:
-                _log_debug(f"[list_live_videos_any] strategy D erro: {e}")
+                _log_debug(f"[list_live_videos_any] RSS erro: {e}")
+
+        # Confirmação via /watch desativada para evitar 429 contínuo.
+        # Os IDs já vêm de páginas com badge/overlay LIVE e do endpoint /live.
+        lives_found: List[Tuple[str, str]] = []
+        for vid in collected_ids[:max_results]:
+            lives_found.append((vid, _best_title(vid, "")))
+
+        # D) Estratégia desativada: expandir IDs a partir da página /watch.
+        # Na prática, isso disparava muitas chamadas extras no /watch e ativava
+        # rate-limit com frequência, prejudicando a varredura em tempo real.
 
         seen = set(); out = []
         for vid, ttl in lives_found:
@@ -824,13 +870,15 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
     chat = None
     last_item_ts   = time.time()
     last_recreate_ts = 0.0
+    recreate_failures = 0       # contador de falhas consecutivas de recreate
+    fatal_invalid_video = False
     msgs_read_in_window = 0
     window_start   = time.time()
     recent         = deque(maxlen=CHAT_DEDUP_WINDOW)
     recent_set     = set()
 
     def recreate(reason: str):
-        nonlocal chat, last_recreate_ts
+        nonlocal chat, last_recreate_ts, recreate_failures, fatal_invalid_video
         try:
             if chat: chat.terminate()
         except Exception:
@@ -839,13 +887,25 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
         try:
             chat = _create_chat(video_id)
             last_recreate_ts = time.time()
+            recreate_failures = 0   # sucesso — reset backoff
         except Exception as e:
-            queue.put({"type": "error", "channel": channel_display, "video_id": video_id, "error": f"recreate failed: {e}"})
+            err = str(e)
+            queue.put({"type": "error", "channel": channel_display, "video_id": video_id, "error": f"recreate failed: {err}"})
             chat = None
+            recreate_failures += 1
+            last_recreate_ts = time.time()  # evita idle_recreate imediato
+            low = err.lower()
+            if ("invalid" in low and "video id" in low) or ("cannot find channel id for video id" in low):
+                fatal_invalid_video = True
 
     try:
         queue.put({"type": "log", "msg": f"[{proc_name}] iniciando: '{title}'", "ts": now_iso()})
         recreate("start")
+        if fatal_invalid_video:
+            # Não enviar "ended" aqui — o supervisor decide quando encerrar
+            # via miss_tolerance. Pytchat pode falhar por rate-limit, não apenas
+            # por ID inválido de verdade.
+            return
         queue.put({"type": "heartbeat", "channel": channel_display, "video_id": video_id,
                    "title": title, "url": f"https://www.youtube.com/watch?v={video_id}", "ts": now_iso()})
 
@@ -853,7 +913,15 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
             try:
                 if chat is None or not chat.is_alive():
                     recreate("chat not alive")
-                    time.sleep(0.2)
+                    if fatal_invalid_video:
+                        # Não enviar "ended" — deixar o supervisor decidir
+                        break
+                    if chat is None:
+                        # Backoff exponencial: 10s, 20s, 40s, 80s, 160s, 300s (máx)
+                        wait = min(10 * (2 ** (recreate_failures - 1)), 300)
+                        time.sleep(wait)
+                    else:
+                        time.sleep(0.2)
                     continue
 
                 got_any = False
@@ -934,12 +1002,17 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
                     window_start = nowt
 
                 if (nowt - last_item_ts) > CHAT_IDLE_RECREATE_SECONDS and (nowt - last_recreate_ts) > 5.0:
-                    live, _ = is_live_now(video_id)
-                    if live:
-                        recreate("idle_recreate")
-                        continue
+                    # Evita chamada extra no /watch (gera 429 e piora a varredura).
+                    # Aqui só tentamos recriar o chat; o supervisor decide encerramento.
+                    recreate("idle_recreate")
+                    continue
 
                 if (nowt - last_item_ts) > CHAT_HARD_WATCHDOG_SECONDS:
+                    # Não matar durante rate-limiting — YouTube pode estar recusando conexões
+                    # mas a live ainda está ativa
+                    if time.time() < _rate_limited_until:
+                        time.sleep(2)
+                        continue
                     queue.put({"type": "error", "channel": channel_display, "video_id": video_id,
                                "error": "hard watchdog: sem msgs"})
                     break
@@ -1286,22 +1359,45 @@ def queue_consumer_loop(q: Queue):
                 print(item.get("msg"))
 
             elif t == "error":
-                _log_debug(f"[ERRO] {item.get('channel')} {item.get('video_id')} {item.get('error')}")
+                ch = item.get("channel")
+                vid = item.get("video_id")
+                err = str(item.get("error") or "")
+                _log_debug(f"[ERRO] {ch} {vid} {err}")
+                low = err.lower()
+                if ch and vid and (
+                    "cannot find channel id for video id" in low
+                    or "video id seems to be invalid" in low
+                ):
+                    with state_lock:
+                        # Só aplica cooldown se a live NÃO está ativa no scanner.
+                        # Se estiver ativa, o erro é provavelmente rate-limit do pytchat,
+                        # não um ID genuinamente inválido.
+                        is_active = vid in active_videos.get(ch, set())
+                    if not is_active:
+                        with state_lock:
+                            invalid_video_until[(ch, vid)] = time.time() + INVALID_VIDEO_COOLDOWN
+                        _log_debug(f"[{ch}] cooldown de ID invalido aplicado: {vid} ({INVALID_VIDEO_COOLDOWN}s)")
+                    else:
+                        _log_debug(f"[{ch}] pytchat falhou para live ativa (rate-limit?): {vid} — {err[:60]}")
 
             elif t == "heartbeat":
                 vid   = item["video_id"]
                 ch    = item["channel"]
-                title = item.get("title") or ""
+                title = _best_title(vid, item.get("title") or "")
                 url   = item.get("url", f"https://www.youtube.com/watch?v={vid}")
-                if not title or title == vid:
-                    title = oembed_title(vid)
+                if not title and time.time() >= _rate_limited_until:
+                    title = _best_title(vid, oembed_title(vid))
                 fs_upsert_live(vid, ch, title, url)
 
             elif t == "chat":
                 vid    = item["video_id"]
+                ch     = item.get("channel")
                 author = item.get("author", "-")
                 text   = item.get("message", "")
                 ts     = item.get("ts", now_iso())
+                if ch:
+                    with state_lock:
+                        invalid_video_until.pop((ch, vid), None)
                 _process_chat_item(vid, author, text, ts)
 
             elif t == "ended":
@@ -1325,34 +1421,29 @@ def _load_active_from_firestore(channel_display: str):
         loaded = []
 
         # 1) Lives atualmente ativas
+        now_br = datetime.now(BR_TZ)
         docs = fs.collection("lives").where("status", "==", "active").stream()
         with state_lock:
             for d in docs:
                 data = d.to_dict() or {}
                 if data.get("channel") == channel_display:
+                    last_seen_raw = data.get("last_seen_at", "")
+                    try:
+                        if last_seen_raw:
+                            dt_seen = datetime.fromisoformat(str(last_seen_raw).replace("Z", "+00:00"))
+                            if dt_seen.tzinfo is None:
+                                dt_seen = dt_seen.replace(tzinfo=timezone.utc)
+                            age_min = (now_br - dt_seen.astimezone(BR_TZ)).total_seconds() / 60.0
+                            if age_min > ACTIVE_RESTORE_MAX_AGE_MIN:
+                                continue
+                    except Exception:
+                        pass
                     active_videos[channel_display].add(d.id)
+                    _best_title(d.id, data.get("title"))
                     loaded.append(d.id)
 
-        # 2) Lives encerradas nas últimas 2h — re-verificar se ainda estão ao vivo
-        cutoff = (datetime.now(BR_TZ) - timedelta(hours=2)).isoformat(timespec="milliseconds")
-        docs_ended = (
-            fs.collection("lives")
-            .where("channel", "==", channel_display)
-            .where("status", "==", "ended")
-            .stream()
-        )
-        for d in docs_ended:
-            data = d.to_dict() or {}
-            if data.get("ended_at", "") < cutoff:
-                continue  # encerrada há mais de 2h — ignorar
-            ok, _ = is_live_now(d.id)
-            if ok:
-                with state_lock:
-                    active_videos[channel_display].add(d.id)
-                loaded.append(d.id)
-                fs_upsert_live(d.id, channel_display, data.get("title", d.id),
-                               data.get("url", f"https://www.youtube.com/watch?v={d.id}"))
-                _log_debug(f"[{channel_display}] live {d.id} restaurada (encerrada prematuramente)")
+        # 2) Revalidação de "ended" desativada para reduzir chamadas no /watch.
+        # O scanner do canal passa a ser a fonte principal de descoberta.
 
         if loaded:
             _log_debug(f"[{channel_display}] {len(loaded)} live(s) carregada(s): {loaded}")
@@ -1396,22 +1487,40 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                 known_snap = set(active_videos.get(channel_display, set()))
             found_ids = {vid for vid, _ in lives}
             for vid in known_snap - found_ids:
-                still_live, still_title = is_live_now(vid)
-                if still_live:
-                    lives.append((vid, still_title or oembed_title(vid)))
-                    _log_debug(f"[{channel_display}] live mantida (invisível no canal): {vid}")
+                if not found_ids:
+                    # Scanner retornou 0 (rate-limited ou canal sem lives visíveis)
+                    # Preserva só se já existe processo vivo para essa live.
+                    # Evita reviver IDs fantasmas do Firestore quando o scanner está cego.
+                    proc = running_monitors.get((channel_display, vid))
+                    if proc and proc.is_alive():
+                        lives.append((vid, _best_title(vid, "")))
+                        _log_debug(f"[{channel_display}] live preservada (scanner retornou 0): {vid}")
+                    else:
+                        _log_debug(f"[{channel_display}] live nao preservada (scanner 0 e sem processo): {vid}")
+                else:
+                    # Scanner encontrou alguns IDs mas esta live sumiu — verificar
+                    still_live, still_title = is_live_now(vid, assume_live_on_error=True)
+                    if still_live:
+                        lives.append((vid, _best_title(vid, still_title)))
+                        _log_debug(f"[{channel_display}] live mantida (invisível no canal): {vid}")
 
             current_ids: Set[str] = set()
             for vid, title in lives:
+                cooldown_key = (channel_display, vid)
+                blocked_until = invalid_video_until.get(cooldown_key, 0.0)
+                if blocked_until > time.time():
+                    _log_debug(f"[{channel_display}] ignorando ID invalido em cooldown: {vid}")
+                    continue
                 current_ids.add(vid)
-                if not title or title == vid:
-                    title = oembed_title(vid)
+                title = _best_title(vid, title)
+                if not title and time.time() >= _rate_limited_until:
+                    title = _best_title(vid, oembed_title(vid))
 
                 with state_lock:
                     active_videos[channel_display].add(vid)
                     video_misses[vid] = 0
 
-                fs_upsert_live(vid, channel_display, title or vid,
+                fs_upsert_live(vid, channel_display, title,
                                f"https://www.youtube.com/watch?v={vid}")
 
                 key  = (channel_display, vid)
@@ -1420,10 +1529,10 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                 if not proc or not proc.is_alive():
                     last_attempt = last_start_attempt.get(key, 0)
                     if nowt - last_attempt > CHAT_RETRY_SECONDS:
-                        _log_debug(f"[{channel_display}] iniciando monitor {vid} ({title})")
+                        _log_debug(f"[{channel_display}] iniciando monitor {vid} ({title or vid})")
                         p = Process(
                             target=monitor_process_main,
-                            args=(channel_display, vid, title, queue),
+                            args=(channel_display, vid, title or vid, queue),
                             daemon=True,
                         )
                         p.start()
