@@ -650,9 +650,9 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             if got and got[0] not in collected_ids:
                 collected_ids.append(got[0])
 
-        # E) RSS feed + oembed title check — fallback quando scraping retorna 0
-        # Confiável mesmo com rate-limit no /watch: oembed é endpoint separado.
-        # Heurística: CazeTV e GETV prefixam todos os lives com "AO VIVO" no título.
+        # E) RSS feed + oembed + InnerTube — fallback quando scraping retorna 0
+        # oembed verifica título; InnerTube updated_metadata confirma se está ao vivo
+        # (retorna updateViewershipAction apenas para transmissões ativas).
         if not collected_ids and cid:
             try:
                 rss = SESSION.get(
@@ -665,10 +665,26 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                         if rss_vid in collected_ids:
                             continue
                         ttl = oembed_title(rss_vid)
-                        if re.match(r"^AO VIVO", ttl, re.I):
-                            collected_ids.append(rss_vid)
-                            _title_cache[rss_vid] = ttl  # evita segunda chamada oembed
-                            _log_debug(f"[list_live_videos_any] RSS+oembed live: {rss_vid} — {ttl}")
+                        if not re.match(r"^AO VIVO", ttl, re.I):
+                            continue
+                        # Confirmar que ainda está ao vivo via InnerTube
+                        try:
+                            r2 = SESSION.post(
+                                "https://www.youtube.com/youtubei/v1/updated_metadata",
+                                params={"key": _INNERTUBE_KEY},
+                                json={"videoId": rss_vid, "context": {"client": {"hl": "pt", "clientName": "WEB", "clientVersion": "2.20240726.00.00"}}},
+                                timeout=5,
+                            )
+                            actions = r2.json().get("actions", []) if r2.status_code == 200 else []
+                            is_live = any("updateViewershipAction" in a for a in actions)
+                        except Exception:
+                            is_live = True  # dúvida: incluir (miss_tolerance vai descartar se necessário)
+                        if not is_live:
+                            _log_debug(f"[list_live_videos_any] RSS+oembed descartado (encerrado): {rss_vid} — {ttl}")
+                            continue
+                        collected_ids.append(rss_vid)
+                        _title_cache[rss_vid] = ttl
+                        _log_debug(f"[list_live_videos_any] RSS+oembed live confirmado: {rss_vid} — {ttl}")
             except Exception as e:
                 _log_debug(f"[list_live_videos_any] RSS erro: {e}")
 
