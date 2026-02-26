@@ -136,40 +136,11 @@ def _log_debug(msg: str):
         f.write(log_msg + "\n")
 
 # ─── FIRESTORE ───────────────────────────────────────────────────────────────
+_INNERTUBE_KEY = "SUA_INNERTUBE_KEY"
+
 def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
-    """Busca audiência atual via YouTube Data API v3 (1 unit de quota por chamada)."""
-    def _from_watch_initial_data(html: str) -> Optional[int]:
-        data = extract_json_blob(
-            html,
-            [
-                r"ytInitialData\s*=\s*(\{.*?\})\s*;",
-                r'"ytInitialData"\s*:\s*(\{.*?\})\s*,\s*"ytcfg"',
-            ],
-        )
-        if not isinstance(data, dict):
-            return None
-
-        stack = [data]
-        while stack:
-            cur = stack.pop()
-            if isinstance(cur, dict):
-                vpr = cur.get("videoPrimaryInfoRenderer")
-                if isinstance(vpr, dict):
-                    vvr = ((vpr.get("viewCount") or {}).get("videoViewCountRenderer") or {})
-                    vc = vvr.get("viewCount") or {}
-                    txt = vc.get("simpleText") or ""
-                    if not txt and isinstance(vc.get("runs"), list):
-                        txt = "".join(str(r.get("text", "")) for r in vc["runs"] if isinstance(r, dict))
-                    if txt and re.search(r"(assistindo|watching)", txt, re.I):
-                        digits = re.sub(r"\D", "", txt)
-                        if digits:
-                            return int(digits)
-                for v in cur.values():
-                    stack.append(v)
-            elif isinstance(cur, list):
-                stack.extend(cur)
-        return None
-
+    """Busca audiência via InnerTube updated_metadata (não precisa de API key)."""
+    # 1) YouTube Data API v3 com chave configurada (mais confiável, 1 quota unit)
     if YOUTUBE_API_KEY:
         try:
             r = requests.get(
@@ -185,35 +156,34 @@ def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
                     return int(cv)
         except Exception as e:
             _log_debug(f"[viewer_count] api erro: {e}")
-    # Se o IP estiver rate-limited pelo YouTube, evita chamadas de watch aqui.
-    # Isso impede extender o bloqueio global e ajuda a varredura voltar.
-    if time.time() < _rate_limited_until:
-        return _viewer_cache.get(video_id)
 
-    # Fallback sem API: extrai da própria página da live.
-    # Importante: não usa safe_get para não contaminar o rate-limit global
-    # da varredura de lives.
+    # 2) InnerTube updated_metadata — usa chave pública do browser, sem rate-limit
+    #    Retorna viewCount.videoViewCountRenderer.viewCount.simpleText como "X assistindo agora"
     try:
-        p = dict(DEFAULT_PARAMS)
-        r = SESSION.get(
-            f"https://www.youtube.com/watch?v={video_id}",
-            params=p,
+        r = requests.post(
+            "https://www.youtube.com/youtubei/v1/updated_metadata",
+            params={"key": _INNERTUBE_KEY},
+            json={
+                "videoId": video_id,
+                "context": {"client": {"hl": "pt", "clientName": "WEB", "clientVersion": "2.20240726.00.00"}},
+            },
             timeout=8,
-            allow_redirects=True,
         )
-        if r.status_code == 429:
-            return _viewer_cache.get(video_id)
         r.raise_for_status()
-        html = r.text
-        if html:
-            m = re.search(r'"concurrentViewers"\s*:\s*"(\d+)"', html)
-            if m:
-                return int(m.group(1))
-            cv_idata = _from_watch_initial_data(html)
-            if cv_idata is not None:
-                return cv_idata
+        for action in r.json().get("actions", []):
+            vvr = (
+                action.get("updateViewershipAction", {})
+                .get("viewCount", {})
+                .get("videoViewCountRenderer", {})
+                .get("viewCount", {})
+            )
+            txt = vvr.get("simpleText", "")
+            if txt and re.search(r"(assistindo|watching)", txt, re.I):
+                digits = re.sub(r"\D", "", txt)
+                if digits:
+                    return int(digits)
     except Exception as e:
-        _log_debug(f"[viewer_count] scrape erro: {e}")
+        _log_debug(f"[viewer_count] innertube erro: {e}")
     return None
 
 # Controle de throttle: busca audiência no máximo a cada 60s por video
