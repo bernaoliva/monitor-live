@@ -1311,24 +1311,50 @@ def queue_consumer_loop(q: Queue):
 
 # ─── SUPERVISOR ──────────────────────────────────────────────────────────────
 def _load_active_from_firestore(channel_display: str):
-    """Na inicialização, popula active_videos com lives status=active do Firestore.
-    Assim o miss-tolerance encerra lives de sessões anteriores na 1ª varredura."""
+    """Na inicialização, popula active_videos com lives do Firestore.
+    Carrega status=active e também verifica lives recentemente encerradas
+    (encerradas nas últimas 2h) — o scanner pode ter desativado prematuramente
+    uma live que ainda está no ar mas sumiu das páginas do canal."""
     if not FIRESTORE_ENABLED:
         return
     try:
         fs = _get_fs()
         if not fs:
             return
-        docs = fs.collection("lives").where("status", "==", "active").stream()
         loaded = []
+
+        # 1) Lives atualmente ativas
+        docs = fs.collection("lives").where("status", "==", "active").stream()
         with state_lock:
             for d in docs:
                 data = d.to_dict() or {}
                 if data.get("channel") == channel_display:
                     active_videos[channel_display].add(d.id)
                     loaded.append(d.id)
+
+        # 2) Lives encerradas nas últimas 2h — re-verificar se ainda estão ao vivo
+        cutoff = (datetime.now(BR_TZ) - timedelta(hours=2)).isoformat(timespec="milliseconds")
+        docs_ended = (
+            fs.collection("lives")
+            .where("channel", "==", channel_display)
+            .where("status", "==", "ended")
+            .stream()
+        )
+        for d in docs_ended:
+            data = d.to_dict() or {}
+            if data.get("ended_at", "") < cutoff:
+                continue  # encerrada há mais de 2h — ignorar
+            ok, _ = is_live_now(d.id)
+            if ok:
+                with state_lock:
+                    active_videos[channel_display].add(d.id)
+                loaded.append(d.id)
+                fs_upsert_live(d.id, channel_display, data.get("title", d.id),
+                               data.get("url", f"https://www.youtube.com/watch?v={d.id}"))
+                _log_debug(f"[{channel_display}] live {d.id} restaurada (encerrada prematuramente)")
+
         if loaded:
-            _log_debug(f"[{channel_display}] {len(loaded)} live(s) ativa(s) carregada(s) do Firestore: {loaded}")
+            _log_debug(f"[{channel_display}] {len(loaded)} live(s) carregada(s): {loaded}")
     except Exception as e:
         _log_debug(f"[_load_active_from_firestore] erro: {e}")
 
@@ -1354,6 +1380,17 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
             lives = list_live_videos_any(handle, channel_id, max_results=LIVE_MAX_RESULTS)
             dt    = time.time() - t0
             _log_debug(f"[{channel_display}] varredura em {dt:.1f}s — {len(lives)} live(s)")
+
+            # Recupera lives conhecidas que sumiram das páginas do canal
+            # (YouTube pode parar de listar mid-stream — verificar diretamente)
+            with state_lock:
+                known_snap = set(active_videos.get(channel_display, set()))
+            found_ids = {vid for vid, _ in lives}
+            for vid in known_snap - found_ids:
+                still_live, still_title = is_live_now(vid)
+                if still_live:
+                    lives.append((vid, still_title or oembed_title(vid)))
+                    _log_debug(f"[{channel_display}] live mantida (invisível no canal): {vid}")
 
             current_ids: Set[str] = set()
             for vid, title in lives:
