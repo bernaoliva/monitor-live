@@ -585,14 +585,27 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
 
         # A) Listagem "só lives"
         collected_ids: List[str] = []
+        def _collect_from_live_filter_page(url: str) -> List[str]:
+            """Extrai IDs da página de filtro de lives; faz fallback para regex bruta
+            se o ytInitialData não tiver badges LIVE (YouTube muda a estrutura)."""
+            page_html = safe_get(url, timeout=SCRAPE_TIMEOUT)
+            if not page_html:
+                return []
+            ids = _extract_live_video_ids_from_html(page_html)
+            if ids:
+                return ids
+            # Fallback: qualquer videoId na página (confirmação via is_live_now depois)
+            raw = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', page_html)]
+            return list(dict.fromkeys(raw))
+
         if h:
-            html = safe_get(f"https://www.youtube.com/@{h}/videos?view=2&live_view=501", timeout=SCRAPE_TIMEOUT)
-            if html:
-                collected_ids.extend(_extract_live_video_ids_from_html(html))
+            collected_ids.extend(_collect_from_live_filter_page(
+                f"https://www.youtube.com/@{h}/videos?view=2&live_view=501"
+            ))
         if cid and not collected_ids:
-            html = safe_get(f"https://www.youtube.com/channel/{cid}/videos?view=2&live_view=501", timeout=SCRAPE_TIMEOUT)
-            if html:
-                collected_ids.extend(_extract_live_video_ids_from_html(html))
+            collected_ids.extend(_collect_from_live_filter_page(
+                f"https://www.youtube.com/channel/{cid}/videos?view=2&live_view=501"
+            ))
         collected_ids = uniq(collected_ids)
 
         # B) Fallback: /streams e home
@@ -623,10 +636,29 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
 
         # Confirma ao vivo e pega título
         lives_found: List[Tuple[str, str]] = []
+        checked_ids: Set[str] = set(collected_ids[:max_results])
         for vid in collected_ids[:max_results]:
             ok, title = is_live_now(vid)
             if ok:
                 lives_found.append((vid, title or oembed_title(vid)))
+
+        # D) Para cada live confirmada, verifica IDs linkados na página de watch
+        #    Detecta streams simultâneas em canais que transmitem múltiplos jogos
+        #    (ex: GETV com MULTITELA + streams individuais de cada partida)
+        for vid, _ in list(lives_found):
+            try:
+                whtml = safe_get(f"https://www.youtube.com/watch?v={vid}", timeout=SCRAPE_TIMEOUT)
+                if not whtml:
+                    continue
+                linked = [m.group(1) for m in re.finditer(r'"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"', whtml)]
+                new_ids = [x for x in dict.fromkeys(linked) if x != vid and x not in checked_ids]
+                for extra in new_ids[:5]:  # limita a 5 novos IDs por live confirmada
+                    checked_ids.add(extra)
+                    ok, title = is_live_now(extra)
+                    if ok:
+                        lives_found.append((extra, title or oembed_title(extra)))
+            except Exception as e:
+                _log_debug(f"[list_live_videos_any] strategy D erro: {e}")
 
         seen = set(); out = []
         for vid, ttl in lives_found:
