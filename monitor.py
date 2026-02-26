@@ -137,6 +137,22 @@ def _log_debug(msg: str):
 
 # ─── FIRESTORE ───────────────────────────────────────────────────────────────
 _INNERTUBE_KEY = "SUA_INNERTUBE_KEY"
+_INNERTUBE_CTX = {"client": {"hl": "pt", "clientName": "WEB", "clientVersion": "2.20240726.00.00"}}
+
+def _innertube_is_live(actions: list) -> bool:
+    """True só para transmissões AO VIVO (texto 'assistindo'/'watching').
+    Exclui encerradas ('visualizações') e agendadas ('aguardando'/'waiting')."""
+    for a in actions:
+        txt = (
+            a.get("updateViewershipAction", {})
+             .get("viewCount", {})
+             .get("videoViewCountRenderer", {})
+             .get("viewCount", {})
+             .get("simpleText", "")
+        )
+        if re.search(r"assistindo|watching", txt, re.I):
+            return True
+    return False
 
 def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
     """Busca audiência via InnerTube updated_metadata (não precisa de API key)."""
@@ -163,10 +179,7 @@ def _fetch_concurrent_viewers(video_id: str) -> Optional[int]:
         r = requests.post(
             "https://www.youtube.com/youtubei/v1/updated_metadata",
             params={"key": _INNERTUBE_KEY},
-            json={
-                "videoId": video_id,
-                "context": {"client": {"hl": "pt", "clientName": "WEB", "clientVersion": "2.20240726.00.00"}},
-            },
+            json={"videoId": video_id, "context": _INNERTUBE_CTX},
             timeout=8,
         )
         r.raise_for_status()
@@ -668,15 +681,16 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                         if not re.match(r"^AO VIVO", ttl, re.I):
                             continue
                         # Confirmar que ainda está ao vivo via InnerTube
+                        # Só "assistindo agora" é live real; "visualizações"=encerrado, "aguardando"=agendado
                         try:
                             r2 = SESSION.post(
                                 "https://www.youtube.com/youtubei/v1/updated_metadata",
                                 params={"key": _INNERTUBE_KEY},
-                                json={"videoId": rss_vid, "context": {"client": {"hl": "pt", "clientName": "WEB", "clientVersion": "2.20240726.00.00"}}},
+                                json={"videoId": rss_vid, "context": _INNERTUBE_CTX},
                                 timeout=5,
                             )
                             actions = r2.json().get("actions", []) if r2.status_code == 200 else []
-                            is_live = any("updateViewershipAction" in a for a in actions)
+                            is_live = _innertube_is_live(actions)
                         except Exception:
                             is_live = True  # dúvida: incluir (miss_tolerance vai descartar se necessário)
                         if not is_live:
@@ -1501,11 +1515,24 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                     else:
                         _log_debug(f"[{channel_display}] live nao preservada (scanner 0 e sem processo): {vid}")
                 else:
-                    # Scanner encontrou alguns IDs mas esta live sumiu — verificar
-                    still_live, still_title = is_live_now(vid, assume_live_on_error=True)
+                    # Scanner encontrou alguns IDs mas esta live sumiu — verificar via InnerTube
+                    # (is_live_now usa scraping de /watch que retorna 429 quando rate-limited)
+                    try:
+                        r2 = SESSION.post(
+                            "https://www.youtube.com/youtubei/v1/updated_metadata",
+                            params={"key": _INNERTUBE_KEY},
+                            json={"videoId": vid, "context": {"client": {"hl": "pt", "clientName": "WEB", "clientVersion": "2.20240726.00.00"}}},
+                            timeout=5,
+                        )
+                        actions = r2.json().get("actions", []) if r2.status_code == 200 else []
+                        still_live = _innertube_is_live(actions)
+                    except Exception:
+                        still_live = True  # dúvida: preservar e deixar miss_tolerance decidir
                     if still_live:
-                        lives.append((vid, _best_title(vid, still_title)))
+                        lives.append((vid, _best_title(vid, "")))
                         _log_debug(f"[{channel_display}] live mantida (invisível no canal): {vid}")
+                    else:
+                        _log_debug(f"[{channel_display}] live descartada (InnerTube: encerrada): {vid}")
 
             current_ids: Set[str] = set()
             for vid, title in lives:
