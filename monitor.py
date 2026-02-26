@@ -405,11 +405,16 @@ def extract_json_blob(html, patterns):
             except Exception: pass
     return None
 
-def is_live_now(video_id: str):
-    """Verifica se um video_id está AO VIVO. Retorna (bool_is_live, title)."""
+def is_live_now(video_id: str, expected_channel_id: str = ""):
+    """Verifica se um video_id está AO VIVO. Retorna (bool_is_live, title).
+    Se expected_channel_id for informado, rejeita vídeos de outros canais."""
     html = safe_get("https://www.youtube.com/watch", params={"v": video_id}, timeout=WATCH_VERIFY_TIMEOUT)
     if not html:
         return (False, None)
+    if expected_channel_id:
+        m_ch = re.search(r'"channelId"\s*:\s*"([A-Za-z0-9_-]+)"', html)
+        if not m_ch or m_ch.group(1) != expected_channel_id:
+            return (False, None)
 
     player = extract_json_blob(
         html,
@@ -654,7 +659,7 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 new_ids = [x for x in dict.fromkeys(linked) if x != vid and x not in checked_ids]
                 for extra in new_ids[:5]:  # limita a 5 novos IDs por live confirmada
                     checked_ids.add(extra)
-                    ok, title = is_live_now(extra)
+                    ok, title = is_live_now(extra, expected_channel_id=cid)
                     if ok:
                         lives_found.append((extra, title or oembed_title(extra)))
             except Exception as e:
