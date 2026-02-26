@@ -862,8 +862,17 @@ def _sig(author: str, msg: str, ts_iso: Optional[str], mid: Optional[str]) -> st
     base = f"{author}|{msg}|{(ts_iso or '')[:19]}"
     return "h:" + hashlib.sha1(base.encode("utf-8", errors="ignore")).hexdigest()
 
-def _create_chat(video_id: str):
-    return pytchat.create(video_id=video_id, topchat_only=False, interruptable=True)
+def _create_chat(video_id: str, channel_id: str = ""):
+    """Cria pytchat, opcionalmente com monkey-patch do get_channelid para evitar HTTP."""
+    if channel_id:
+        import pytchat.util as _pu
+        _orig_fn = _pu.get_channelid
+        _pu.get_channelid = lambda client, vid: channel_id
+    try:
+        return pytchat.create(video_id=video_id, topchat_only=False, interruptable=True)
+    finally:
+        if channel_id:
+            _pu.get_channelid = _orig_fn
 
 def monitor_process_main(channel_display: str, video_id: str, title: str, queue: Queue):
     proc_name = f"monitor[{channel_display}:{video_id}]"
@@ -877,6 +886,14 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
     recent         = deque(maxlen=CHAT_DEDUP_WINDOW)
     recent_set     = set()
 
+    # channel_id conhecido → evita que pytchat.util.get_channelid faça HTTP
+    # (endpoint /embed retorna sem channelId; /watch é bloqueado na VM)
+    _known_channel_id = next(
+        (ch["channel_id"] for ch in CHANNELS
+         if ch["display"] == channel_display and ch.get("channel_id")),
+        ""
+    )
+
     def recreate(reason: str):
         nonlocal chat, last_recreate_ts, recreate_failures, fatal_invalid_video
         try:
@@ -885,7 +902,7 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
             pass
         queue.put({"type": "log", "msg": f"[{proc_name}] recriando pytchat: {reason}", "ts": now_iso()})
         try:
-            chat = _create_chat(video_id)
+            chat = _create_chat(video_id, _known_channel_id)
             last_recreate_ts = time.time()
             recreate_failures = 0   # sucesso — reset backoff
         except Exception as e:
