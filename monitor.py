@@ -598,6 +598,8 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                 for pat in [
                     r'"canonical"[^>]*?watch\?v=([A-Za-z0-9_-]{11})',
                     r'"canonicalBaseUrl"\s*:\s*"/watch\?v=([A-Za-z0-9_-]{11})"',
+                    # Fallback: /live agora renderiza player inline com videoId no JS
+                    r'"videoId":"([A-Za-z0-9_-]{11})"',
                 ]:
                     m = re.search(pat, html)
                     if m:
@@ -694,11 +696,8 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                     for rss_vid in rss_ids[:15]:
                         if rss_vid in collected_ids:
                             continue
-                        ttl = oembed_title(rss_vid)
-                        if not re.match(r"^AO VIVO", ttl, re.I):
-                            continue
-                        # Confirmar que ainda está ao vivo via InnerTube
-                        # Só "assistindo agora" é live real; "visualizações"=encerrado, "aguardando"=agendado
+                        # InnerTube primeiro — source of truth, sem filtro de título
+                        # (GETV usa títulos como "SANTOS X VASCO | #live" que não começam com "AO VIVO")
                         try:
                             r2 = SESSION.post(
                                 "https://www.youtube.com/youtubei/v1/updated_metadata",
@@ -709,13 +708,15 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
                             actions = r2.json().get("actions", []) if r2.status_code == 200 else []
                             is_live = _innertube_is_live(actions)
                         except Exception:
-                            is_live = True  # dúvida: incluir (miss_tolerance vai descartar se necessário)
+                            is_live = False  # conservador: só inclui se confirmado
                         if not is_live:
-                            _log_debug(f"[list_live_videos_any] RSS+oembed descartado (encerrado): {rss_vid} — {ttl}")
+                            _log_debug(f"[list_live_videos_any] RSS descartado (não é live): {rss_vid}")
                             continue
+                        # Confirmado ao vivo — buscar título
+                        ttl = oembed_title(rss_vid)
                         collected_ids.append(rss_vid)
                         _title_cache[rss_vid] = ttl
-                        _log_debug(f"[list_live_videos_any] RSS+oembed live confirmado: {rss_vid} — {ttl}")
+                        _log_debug(f"[list_live_videos_any] RSS live confirmado: {rss_vid} — {ttl}")
             except Exception as e:
                 _log_debug(f"[list_live_videos_any] RSS erro: {e}")
 
