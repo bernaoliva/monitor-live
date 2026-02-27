@@ -51,7 +51,7 @@ export default function CommentsChart({ data, height = 220, showLegend = true }:
 
   if (data.length === 0) {
     return (
-      <div className="h-48 flex items-center justify-center text-white/20 text-sm">
+      <div style={{ height }} className="flex items-center justify-center text-white/20 text-sm">
         Aguardando comentários...
       </div>
     )

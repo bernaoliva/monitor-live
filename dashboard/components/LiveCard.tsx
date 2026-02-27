@@ -69,26 +69,26 @@ export default function LiveCard({
   onPin?: () => void
   isDragging?: boolean
   isDragOver?: boolean
-  onDragStart?: () => void
+  onDragStart?: (e: React.DragEvent) => void
   onDragOver?: (e: React.DragEvent) => void
   onDrop?: (e: React.DragEvent) => void
-  onDragEnd?: () => void
+  onDragEnd?: (e: React.DragEvent) => void
 }) {
-  // Alturas calibradas para caber em 1080p (header +12px por causa do subtítulo)
-  const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : 125
-  const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : 150
-  const showCats     = true              // categorias sempre visíveis
-  const compactCats  = liveCount >= 4   // pills em vez de barras laterais
-  const denseHeader  = liveCount >= 9   // 5 colunas — header ultra-compacto
+  // Alturas calibradas para preencher 1080p
+  // 1-3: 1 linha | 4-6: 2-3 cols, 2 linhas | 7-10: 4-5 cols, 2 linhas | 11-15: 3 linhas | 16+: 4 linhas
+  const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : liveCount <= 6 ? 125 : liveCount <= 8 ? 120 : liveCount <= 10 ? 170 : liveCount <= 15 ? 90 : 60
+  const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : liveCount <= 8 ? 135 : liveCount <= 10 ? 210 : liveCount <= 15 ? 110 : 70
+  const showCats     = true
+  const compactCats  = liveCount >= 4
+  const denseHeader  = liveCount >= 7
+  const ultraDense   = liveCount >= 10  // modo ultra-compacto
 
   const [chartData,       setChartData]       = useState<ChartPoint[]>([])
   const [allTechComments, setAllTechComments] = useState<Comment[]>([])
   const [dismissed,       setDismissed]       = useState<Set<string>>(new Set())
   const [alertKey,        setAlertKey]        = useState(0)
-  const [titleWraps,      setTitleWraps]      = useState(false)
   const [dismissError,    setDismissError]    = useState(false)
   const techSnapshotReadyRef = useRef(false)
-  const titleRef = useRef<HTMLSpanElement>(null)
 
   const minuteKeyFromTs = (ts: string): string | null => {
     const m = ts.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
@@ -102,22 +102,6 @@ export default function LiveCard({
     } catch {}
   }, [live.video_id])
 
-  // Detecta se o título quebra linha para reduzir fonte minimamente
-  useEffect(() => {
-    const el = titleRef.current
-    if (!el) return
-    const check = () => {
-      // Mede altura com 1 linha forçada vs altura real
-      el.style.whiteSpace = "nowrap"
-      const singleH = el.scrollHeight
-      el.style.whiteSpace = ""
-      setTitleWraps(el.scrollHeight > singleH)
-    }
-    check()
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [live.title, live.video_id])
 
   const dismissComment = async (c: Comment) => {
     const minuteKey = minuteKeyFromTs(c.ts)
@@ -248,11 +232,11 @@ export default function LiveCard({
   return (
     <div
       draggable={!!onDragStart}
-      onDragStart={(e) => { e.dataTransfer.setData("text/plain", live.video_id); e.dataTransfer.effectAllowed = "move"; onDragStart?.() }}
+      onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      className={`panel overflow-hidden relative transition-opacity ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
+      className={`panel overflow-hidden relative transition-opacity h-full flex flex-col ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
       style={{ borderColor: channelBorderColor, borderWidth: "2px", boxShadow: channelGlow }}
     >
 
@@ -269,7 +253,7 @@ export default function LiveCard({
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]">
+      <div className={`flex items-center justify-between px-3 border-b border-white/[0.06] ${ultraDense ? "py-1" : "py-2"}`}>
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="relative w-1.5 h-1.5 shrink-0">
             <div className="absolute inset-0 rounded-full bg-emerald-400 pulse-dot" />
@@ -277,11 +261,11 @@ export default function LiveCard({
           </div>
           <div className="min-w-0 flex-1">
             <span
-              ref={titleRef}
-              className={`font-bold text-white line-clamp-2 leading-tight block ${titleWraps ? "text-[11px]" : "text-[12px]"}`}
+              className={`font-bold text-white leading-tight block ${ultraDense ? "text-[9px] line-clamp-1 min-h-[14px]" : denseHeader ? "text-[10px] line-clamp-1 min-h-[16px]" : "text-[12px] line-clamp-2 min-h-[30px]"}`}
             >
               {live.title || live.video_id}
             </span>
+            {!ultraDense && (
             <div className="flex items-center gap-2 mt-0.5">
               {live.url && (
                 <a
@@ -307,6 +291,7 @@ export default function LiveCard({
                 {visibleComments.length} problemas
               </span>
             </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-2">
@@ -329,7 +314,7 @@ export default function LiveCard({
       </div>
 
       {/* Gráfico com logo do canal como marca d'água */}
-      <div className="relative px-3 pt-2 pb-0">
+      <div className={`relative px-3 pb-0 ${ultraDense ? "pt-1" : "pt-2"}`}>
         {channelLogo && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
             <Image
@@ -347,8 +332,8 @@ export default function LiveCard({
       </div>
 
       {/* Pills de categoria — só para 4-6 lives */}
-      {showCats && compactCats && categoryBreakdown.length > 0 && (
-        <div className="px-3 py-1.5 flex items-center gap-1.5 flex-wrap border-t border-white/[0.04]">
+      {showCats && compactCats && (
+        <div className={`px-3 flex items-center gap-1.5 flex-wrap border-t border-white/[0.04] ${ultraDense ? "py-1 min-h-[22px]" : "py-1.5 min-h-[28px]"}`}>
           {categoryBreakdown.map(([cat, count]) => {
             const s = CAT_STYLE[cat] ?? CAT_DEFAULT
             return (
@@ -361,23 +346,25 @@ export default function LiveCard({
       )}
 
       {/* Comentários + barra lateral de categorias (1-3 lives) */}
-      <div className="border-t border-white/[0.06] flex min-h-0">
+      <div className="border-t border-white/[0.06] flex min-h-0 flex-1">
 
         {/* Feed de comentários */}
-        <div className={showCats && !compactCats ? "flex-[4] min-w-0 border-r border-white/[0.06]" : "flex-1 min-w-0"}>
-          <div className="px-3 py-1.5 flex items-center gap-1.5 border-b border-white/[0.04]">
+        <div className={`flex flex-col ${showCats && !compactCats ? "flex-[4] min-w-0 border-r border-white/[0.06]" : "flex-1 min-w-0"}`}>
+          <div className="px-3 py-1.5 flex items-center gap-1.5 border-b border-white/[0.04] shrink-0">
             <AlertTriangle size={8} className="text-red-400/60 shrink-0" />
             <span className="text-[8px] font-bold font-mono uppercase tracking-wider text-white/40">Problemas recentes</span>
             <span className="font-data text-[9px] text-white/25 ml-auto">{visibleComments.length}</span>
           </div>
           {dismissError && (
-            <div className="px-3 py-1 text-[9px] text-red-400/70 font-mono bg-red-500/5 border-b border-red-500/10">
+            <div className="px-3 py-1 text-[9px] text-red-400/70 font-mono bg-red-500/5 border-b border-red-500/10 shrink-0">
               Erro ao descartar. Tente novamente.
             </div>
           )}
-          <div className="overflow-y-auto comments-scroll" style={{ maxHeight: commentsMaxH }}>
+          <div className="overflow-y-auto comments-scroll flex-1" style={{ minHeight: commentsMaxH, maxHeight: commentsMaxH }}>
             {visibleComments.length === 0 ? (
-              <div className="px-3 py-3 text-[10px] text-white/20 font-mono">Nenhum problema detectado</div>
+              <div className="h-full px-3 py-3 text-[10px] text-white/20 font-mono flex items-center">
+                Nenhum problema detectado
+              </div>
             ) : (
               visibleComments.map((c) => {
                 const catKey  = normalizeCategory(c.category) ?? ""

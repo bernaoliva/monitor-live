@@ -13,7 +13,7 @@ interface CardLayoutState {
 interface CardLayoutContextType extends CardLayoutState {
   setSortMode: (mode: SortMode) => void
   togglePin: (videoId: string) => void
-  reorder: (fromId: string, toId: string) => void
+  reorder: (fromId: string, toId: string, allIds?: string[]) => void
 }
 
 const defaultState: CardLayoutState = {
@@ -68,12 +68,18 @@ export function CardLayoutProvider({ children }: { children: React.ReactNode }) 
     })
   }, [])
 
-  const reorder = useCallback((fromId: string, toId: string) => {
+  const reorder = useCallback((fromId: string, toId: string, allIds: string[] = []) => {
     setState((prev) => {
-      const order = [...prev.manualOrder]
+      // Inicializa manualOrder a partir de allIds se ainda estiver vazio
+      let order = [...prev.manualOrder]
+      for (const id of allIds) {
+        if (!order.includes(id)) order.push(id)
+      }
+      if (!order.includes(fromId)) order.push(fromId)
+      if (!order.includes(toId)) order.push(toId)
       const fromIdx = order.indexOf(fromId)
       const toIdx = order.indexOf(toId)
-      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev
+      if (fromIdx === toIdx) return prev
       order.splice(fromIdx, 1)
       order.splice(toIdx, 0, fromId)
       const next = { ...prev, manualOrder: order, sortMode: "manual" as SortMode }

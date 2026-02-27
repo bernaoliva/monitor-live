@@ -21,12 +21,12 @@ function gapFor(total: number): string {
 function gridClass(n: number): string {
   if (n <= 1) return ""
   const gap = gapFor(n)
-  if (n === 2) return `grid grid-cols-2 ${gap}`
-  if (n === 3) return `grid grid-cols-3 ${gap}`
-  if (n === 4) return `grid grid-cols-2 ${gap}`
-  if (n <= 6)  return `grid grid-cols-3 ${gap}`
-  if (n <= 8)  return `grid grid-cols-4 ${gap}`
-  return `grid grid-cols-5 ${gap}`
+  if (n === 2) return `grid grid-cols-2 auto-rows-fr ${gap}`
+  if (n === 3) return `grid grid-cols-3 auto-rows-fr ${gap}`
+  if (n === 4) return `grid grid-cols-2 auto-rows-fr ${gap}`
+  if (n <= 6)  return `grid grid-cols-3 auto-rows-fr ${gap}`
+  if (n <= 8)  return `grid grid-cols-4 auto-rows-fr ${gap}`
+  return `grid grid-cols-5 auto-rows-fr ${gap}`
 }
 
 // Grid dos fixados: cols baseado em pinned.length (max 5), gap baseado no TOTAL
@@ -34,7 +34,7 @@ function pinnedGridClass(pinnedCount: number, totalCount: number): string {
   if (pinnedCount <= 1) return ""
   const gap  = gapFor(totalCount)
   const cols = Math.min(pinnedCount, 5)
-  return `grid grid-cols-${cols} ${gap}`
+  return `grid grid-cols-${cols} auto-rows-fr ${gap}`
 }
 
 // Divide os não-fixados em [linhas completas de 5, sobras da última linha]
@@ -45,8 +45,8 @@ function splitUnpinned<T>(items: T[]): [T[], T[]] {
 
 function innerGridClass(n: number): string {
   if (n <= 1) return ""
-  if (n === 2) return "grid grid-cols-2 gap-3"
-  return "grid grid-cols-2 gap-2"
+  if (n === 2) return "grid grid-cols-2 auto-rows-fr gap-3"
+  return "grid grid-cols-2 auto-rows-fr gap-2"
 }
 
 function sortLives(lives: Live[], mode: SortMode, manualOrder: string[]): Live[] {
@@ -71,9 +71,12 @@ export default function HomePage() {
   const [connected, setConnected] = useState(false)
   const [hidden, setHidden]       = useState<Set<string>>(new Set())
   const { selected: selectedChannels } = useChannels()
-  const { sortMode, pinnedIds, manualOrder, setSortMode, togglePin, reorder } = useCardLayout()
-  const orderRef = useRef<string[]>([])
+  const { sortMode, pinnedIds, setSortMode, togglePin } = useCardLayout()
+  const orderRef       = useRef<string[]>([])
+  const draggingIdRef  = useRef<string | null>(null)
 
+  // Ordem manual dos cards — local state, igual ao dev-preview
+  const [cardOrder, setCardOrder] = useState<string[]>([])
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
 
@@ -119,6 +122,13 @@ export default function HomePage() {
         // Ordem estavel: novos IDs vao para o final, existentes mantem posicao
         const newIds = data.map((l) => l.video_id).filter((id) => !orderRef.current.includes(id))
         orderRef.current = [...orderRef.current, ...newIds]
+        if (newIds.length > 0) {
+          setCardOrder((prev) => {
+            const prevSet = new Set(prev)
+            const toAdd = newIds.filter((id) => !prevSet.has(id))
+            return toAdd.length > 0 ? [...prev, ...toAdd] : prev
+          })
+        }
         setLives(
           [...data].sort(
             (a, b) => orderRef.current.indexOf(a.video_id) - orderRef.current.indexOf(b.video_id)
@@ -143,8 +153,8 @@ export default function HomePage() {
     ? []
     : activeAll.filter((l) => selectedList.includes((l.channel || "").toUpperCase() as ChannelName))
 
-  // Ordenação
-  const sorted = sortMode === "split-lr" ? active : sortLives(active, sortMode, manualOrder)
+  // Ordenação — usa cardOrder (local) para "manual", context para outros modos
+  const sorted = sortMode === "split-lr" ? active : sortLives(active, sortMode, cardOrder)
   const pinned   = sorted.filter((l) => pinnedIds.includes(l.video_id))
   const unpinned = sorted.filter((l) => !pinnedIds.includes(l.video_id))
 
@@ -152,27 +162,57 @@ export default function HomePage() {
   const cazeLives = active.filter((l) => l.channel.toUpperCase() === "CAZETV")
   const getvLives = active.filter((l) => l.channel.toUpperCase() === "GETV")
 
+  // handleDrop — atualiza cardOrder diretamente, igual ao dev-preview
   const handleDrop = useCallback((fromId: string, toId: string) => {
-    reorder(fromId, toId)
+    setCardOrder((prev) => {
+      const order = [...prev]
+      if (!order.includes(fromId)) order.push(fromId)
+      if (!order.includes(toId)) order.push(toId)
+      const fromIdx = order.indexOf(fromId)
+      const toIdx   = order.indexOf(toId)
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev
+      order.splice(fromIdx, 1)
+      order.splice(toIdx, 0, fromId)
+      return order
+    })
+    setSortMode("manual")
+    draggingIdRef.current = null
     setDraggingId(null)
     setDragOverId(null)
-  }, [reorder])
+  }, [setSortMode])
 
   const renderCard = (live: Live, liveCount: number) => (
-    <LiveCard
+    <div
       key={live.video_id}
-      live={live}
-      liveCount={liveCount}
-      isPinned={pinnedIds.includes(live.video_id)}
-      onPin={() => togglePin(live.video_id)}
-      onDismiss={() => hideCard(live.video_id)}
-      isDragging={draggingId === live.video_id}
-      isDragOver={dragOverId === live.video_id}
-      onDragStart={() => setDraggingId(live.video_id)}
-      onDragOver={(e: React.DragEvent) => { e.preventDefault(); setDragOverId(live.video_id) }}
-      onDrop={(e: React.DragEvent) => { e.preventDefault(); if (draggingId && draggingId !== live.video_id) handleDrop(draggingId, live.video_id) }}
-      onDragEnd={() => { setDraggingId(null); setDragOverId(null) }}
-    />
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", live.video_id)
+        e.dataTransfer.effectAllowed = "move"
+        draggingIdRef.current = live.video_id
+        setDraggingId(live.video_id)
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = "move"
+        setDragOverId(live.video_id)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        const fromId = draggingIdRef.current
+        if (fromId && fromId !== live.video_id) handleDrop(fromId, live.video_id)
+      }}
+      onDragEnd={() => { draggingIdRef.current = null; setDraggingId(null); setDragOverId(null) }}
+      onDragLeave={() => { if (dragOverId === live.video_id) setDragOverId(null) }}
+      className={`h-full ${draggingId === live.video_id ? "dragging" : ""} ${dragOverId === live.video_id ? "drag-over" : ""}`}
+    >
+      <LiveCard
+        live={live}
+        liveCount={liveCount}
+        isPinned={pinnedIds.includes(live.video_id)}
+        onPin={() => togglePin(live.video_id)}
+        onDismiss={() => hideCard(live.video_id)}
+      />
+    </div>
   )
 
   return (
@@ -258,12 +298,12 @@ export default function HomePage() {
             return (
               <div className={`fade-d1 flex flex-col ${gap}`}>
                 {fullRows.length > 0 && (
-                  <div className={`grid grid-cols-5 ${gap}`}>
+                  <div className={`grid grid-cols-5 auto-rows-fr ${gap}`}>
                     {fullRows.map((live) => renderCard(live, active.length))}
                   </div>
                 )}
                 {lastRow.length > 0 && (
-                  <div className={`grid grid-cols-${lastRow.length} ${gap}`}>
+                  <div className={`grid grid-cols-${lastRow.length} auto-rows-fr ${gap}`}>
                     {lastRow.map((live) => renderCard(live, active.length))}
                   </div>
                 )}

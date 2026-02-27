@@ -16,9 +16,9 @@ export default function ChannelSelector() {
         <Image
           src="/cazetv-logo-branco.png"
           alt="CazeTV"
-          width={72}
-          height={20}
-          className="h-[18px] w-auto object-contain"
+          width={100}
+          height={28}
+          className="h-[26px] w-auto object-contain"
         />
         <span className={`block mt-0.5 h-0.5 rounded-full transition-all ${selected.CAZETV ? "bg-white/60" : "bg-transparent"}`} />
       </button>
@@ -31,9 +31,9 @@ export default function ChannelSelector() {
         <Image
           src="/getv-logo.png"
           alt="ge.tv"
-          width={56}
-          height={16}
-          className="h-[14px] w-auto object-contain"
+          width={90}
+          height={26}
+          className="h-[24px] w-auto object-contain"
         />
         <span className={`block mt-0.5 h-0.5 rounded-full transition-all ${selected.GETV ? "bg-emerald-400/80" : "bg-transparent"}`} />
       </button>
