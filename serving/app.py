@@ -72,6 +72,12 @@ ISSUE_RULES = [
 
     (r"PLACAR ERRADO",
      "PLACAR/GC", "PLACAR ERRADO", "medium"),
+
+    (r"sem sinal|sinal (caiu|ruim|horrível|horrivel|péssimo|péssim|pessim|cortou|sumiu)|cad[eê] o? ?sinal|perd(eram|eu|ido) o? ?sinal",
+     "REDE", "SEM SINAL", "high"),
+
+    (r"delay.*(stream|live|transmiss)|delay (alto|enorme|absurdo)|(stream|live|transmiss).*(delay|atraso|atrasad)|com delay|muito delay|latência|latencia",
+     "REDE/PLATAFORMA", "DELAY", "medium"),
 ]
 
 _compiled_rules = [

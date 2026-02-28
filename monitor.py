@@ -791,6 +791,9 @@ _KEYWORD_FALLBACK = [
                                                                             "VIDEO", "qualidade_video",  "medium"),
     (re.compile(r"\b(?:buffering|buffer|live\s+caiu|caiu\s+a\s+live|erro\s+ao\s+abrir)\b", re.I),
                                                                             "REDE",  "conexao",          "high"),
+    # Sinal: "sem sinal", "sinal caiu", "cade o sinal", "perderam o sinal", "sinal ruim"
+    (re.compile(r"\b(?:sem\s+sinal|sinal\s+(?:caiu|ruim|horrivel|horrível|péssim|pessim|cortou|sumiu|perdid)|(?:cadê|cade|perderam|perdeu)\s+(?:o\s+)?sinal)\b", re.I),
+                                                                            "REDE",  "sem_sinal",        "high"),
 ]
 
 def _keyword_override(text: str) -> Optional[dict]:
@@ -807,6 +810,7 @@ _TECH_KEYWORDS = re.compile(
     r"|\b(?:video|vídeo)\b|\btela\b|\bimagem\b|\bpixel|\bqualidade\b"  # vídeo
     r"|\btravand|\btravan|\bfreez"                               # travamento (congel removido — ambíguo com clima)
     r"|\bbuffer|\blag\b|\bping\b|\bcaiu\b|\bcarregan|\bloadin"  # rede
+    r"|\bsinal\b"                                                  # sinal
     r"|\bsem\s+(?:som|audio|áudio|video|vídeo|imagem|sinal)"    # ausência
     r"|\bcortand|\bestouran|\bestourad|\bchian|\bruído|\beco\b"  # distorção
     r"|\bpreta\b|\bescura\b|\bborrad|\bpixelad"                 # visual
