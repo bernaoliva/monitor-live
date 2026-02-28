@@ -372,25 +372,22 @@ export default function LiveCard({
                 return (
                   <div
                     key={c.id}
-                    className="relative group flex items-start gap-2 px-3 py-1.5 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
+                    className="relative group flex items-center gap-2 px-3 h-9 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
                   >
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
-                    <span className={`block w-1 h-1 rounded-full shrink-0 mt-1.5 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
+                    <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="text-[9px] text-white/50 font-mono truncate">{c.author}</span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {catKey && <span className={`text-[7px] font-bold font-mono ${catStyle.text}`}>{catKey}</span>}
-                          <span className="text-[9px] text-white/70 font-mono font-bold">{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
-                        </div>
-                      </div>
-                      <span className="text-[11px] text-white/65 break-words leading-tight block">{c.text}</span>
+                      <span className="text-sm text-white/70 line-clamp-2 leading-tight">{c.text} <span className="text-[9px] text-white/30 font-mono">— {c.author}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {catKey && <span className={`text-[9px] font-bold font-mono ${catStyle.text}`}>{catKey}</span>}
+                      <span className="text-[10px] text-white/50 font-mono">{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
                     </div>
                     <button
                       onClick={() => dismissComment(c)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70 mt-0.5"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70"
                     >
-                      <X size={9} />
+                      <X size={10} />
                     </button>
                   </div>
                 )
@@ -401,10 +398,10 @@ export default function LiveCard({
 
         {/* Sidebar de categorias — só para 1-3 lives */}
         {showCats && !compactCats && (
-          <div className="flex-[1] min-w-0 px-3 py-2.5 space-y-2">
-            <p className="text-[7px] font-bold uppercase tracking-wider text-white/35">Por categoria</p>
+          <div className="flex-[1] min-w-0 px-3 py-2.5 space-y-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-white/35">Por categoria</p>
             {categoryBreakdown.length === 0 ? (
-              <p className="text-[9px] text-white/20 font-mono">—</p>
+              <p className="text-[13px] text-white/20 font-mono">—</p>
             ) : (
               categoryBreakdown.map(([cat, count]) => {
                 const style = CAT_STYLE[cat] ?? CAT_DEFAULT
@@ -412,8 +409,8 @@ export default function LiveCard({
                 return (
                   <div key={cat} className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className={`text-[7px] font-bold font-mono uppercase ${style.text}`}>{cat}</span>
-                      <span className={`font-data text-[9px] font-bold ${style.text}`}>{count}</span>
+                      <span className={`text-[11px] font-bold font-mono uppercase ${style.text}`}>{cat}</span>
+                      <span className={`font-data text-[13px] font-bold ${style.text}`}>{count}</span>
                     </div>
                     <div className="h-1 bg-white/[0.06] rounded-full overflow-hidden">
                       <div
