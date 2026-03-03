@@ -43,7 +43,7 @@ ISSUE_RULES = [
     (r"(audio|áudio|som).*(chiando|estourado|distorcido|horrível|ruim)|chiando|estourado",
      "ÁUDIO", "ÁUDIO DISTORCIDO", "medium"),
 
-    (r"eco|(audio|áudio|som) duplicado|dois (audio|áudios|sons)",
+    (r"\beco\b|(audio|áudio|som) duplicado|dois (audio|áudios|sons)",
      "ÁUDIO", "ÁUDIO COM ECO/DUPLICADO", "medium"),
 
     (r"(audio|áudio|som).*(atrasado|adiantado|atraso|dessincronizado|fora de sincronia|desincronizado)|fora de sinc|boca.*voz|voz.*boca",
@@ -55,7 +55,7 @@ ISSUE_RULES = [
     (r"tela preta|black screen",
      "VÍDEO", "TELA PRETA", "high"),
 
-    (r"travando|travou|congelou|congelando|congelado|imagem (parou|travou|congelou)|fica parando|para toda hora",
+    (r"travando|travou|travada|travado|congelou|congelando|congelado|lagando|lagou|lag\b|imagem (parou|travou|congelou)|fica parando|para toda hora",
      "REDE/PLATAFORMA", "BUFFERING", "medium"),
 
     (r"pixelando|pixelado|pixelou|muitos? pixels?|resolução (caiu|baixou)|qualidade (caiu|baixou|péssima|horrível)|baixa resolução|borrado|imagem borrada|em 144p",
@@ -73,11 +73,17 @@ ISSUE_RULES = [
     (r"PLACAR ERRADO",
      "PLACAR/GC", "PLACAR ERRADO", "medium"),
 
-    (r"sem sinal|sinal (caiu|ruim|horrível|horrivel|péssimo|péssim|pessim|cortou|sumiu)|cad[eê] o? ?sinal|perd(eram|eu|ido) o? ?sinal",
+    (r"sem sinal|sinal (caiu|ruim|horrível|horrivel|péssimo|péssim|pessim|cortou|sumiu|zoado)|cad[eê] o? ?sinal|perd(eram|eu|ido) o? ?sinal|f sinal",
      "REDE", "SEM SINAL", "high"),
 
-    (r"delay.*(stream|live|transmiss)|delay (alto|enorme|absurdo)|(stream|live|transmiss).*(delay|atraso|atrasad)|com delay|muito delay|latência|latencia",
+    (r"delay.*(stream|live|transmiss)|delay (alto|enorme|absurdo|gigante|gigantesco|de \d+|demais|imenso|insuportável)|(stream|live|transmiss).*(delay|atraso|atrasad)|com delay|muito delay|ta com delay|tá com delay|latência|latencia",
      "REDE/PLATAFORMA", "DELAY", "medium"),
+
+    (r"vascou|vascando|vai vascar",
+     "REDE/PLATAFORMA", "LIVE CAIU", "high"),
+
+    (r"(não|nao|n) (pagou?|paga) (a |o )?(internet|wifi|wi-fi|net\b)|paga a (internet|wifi|wi-fi)|pague a (internet|wifi)|internet.*cortaram|cortaram.*(internet|wifi)",
+     "REDE/PLATAFORMA", "CONEXÃO", "medium"),
 ]
 
 _compiled_rules = [
@@ -142,6 +148,8 @@ class ClassifyResult(BaseModel):
     issue:        Optional[str]
     severity:     str
     confidence:   float
+    model_raw_label: bool = False
+    prob_technical:  float = 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +182,7 @@ def _infer(texts: list[str]) -> list[ClassifyResult]:
     for i, (pred, prob) in enumerate(zip(preds, probs)):
         is_technical = bool(pred.item() == 1)
         confidence   = float(prob[pred].item())
+        model_raw    = is_technical  # pred original antes do guard
 
         if is_technical:
             cat, iss, sev = get_category(texts[i])
@@ -190,6 +199,8 @@ def _infer(texts: list[str]) -> list[ClassifyResult]:
             issue=iss,
             severity=sev,
             confidence=confidence,
+            model_raw_label=model_raw,
+            prob_technical=float(prob[1].item()),
         ))
 
     return results
