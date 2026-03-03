@@ -44,11 +44,11 @@ def parse_args():
     return p.parse_args()
 
 
-def upload_file(local_path: str, bucket_name: str, gcs_path: str):
-    client = storage.Client()
+def upload_file(local_path: str, bucket_name: str, gcs_path: str, project_id: str = None):
+    client = storage.Client(project=project_id)
     blob = client.bucket(bucket_name).blob(gcs_path)
     blob.upload_from_filename(local_path)
-    print(f"  Upload: {local_path} → gs://{bucket_name}/{gcs_path}")
+    print(f"  Upload: {local_path} -> gs://{bucket_name}/{gcs_path}")
 
 
 def main():
@@ -76,8 +76,8 @@ def main():
         print("ERRO: trainer/train.py nao encontrado.")
         sys.exit(1)
 
-    upload_file("training_data.csv",  args.bucket_name, "data/training_data.csv")
-    upload_file("trainer/train.py",   args.bucket_name, "trainer/train.py")
+    upload_file("training_data.csv",  args.bucket_name, "data/training_data.csv", args.project_id)
+    upload_file("trainer/train.py",   args.bucket_name, "trainer/train.py", args.project_id)
 
     # ── 2. Inicializar Vertex AI ──────────────────────────────────────────────
     print("\n[2/3] Inicializando Vertex AI...")

@@ -26,7 +26,7 @@ def main():
     args = parse_args()
 
     os.makedirs(args.local_dir, exist_ok=True)
-    client  = storage.Client()
+    client  = storage.Client(project="youtube-monitor-474920")
     bucket  = client.bucket(args.bucket_name)
     blobs   = list(bucket.list_blobs(prefix=args.gcs_prefix))
 
@@ -44,7 +44,7 @@ def main():
         dest = os.path.join(args.local_dir, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         blob.download_to_filename(dest)
-        print(f"  {blob.name} → {dest}")
+        print(f"  {blob.name} -> {dest}")
 
     print(f"\nModelo salvo em: {args.local_dir}/")
 
