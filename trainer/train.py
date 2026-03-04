@@ -19,11 +19,13 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from google.cloud import storage
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 from torch.utils.data import Dataset
 from transformers import (
     DistilBertForSequenceClassification,
@@ -101,6 +103,28 @@ def gcs_upload_dir(local_dir: str, gcs_dir: str):
     except Exception as e:
         logger.error(f"Erro ao fazer upload para {gcs_dir}: {e}")
         raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRAINER COM CLASS WEIGHTS (corrige desbalanceamento)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WeightedTrainer(Trainer):
+    """Trainer que aplica class weights no cross-entropy loss."""
+
+    def __init__(self, class_weights: torch.Tensor, **kwargs):
+        super().__init__(**kwargs)
+        self.class_weights = class_weights
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels  = inputs.get("labels")
+        outputs = model(**inputs)
+        logits  = outputs.get("logits")
+        loss_fct = torch.nn.CrossEntropyLoss(
+            weight=self.class_weights.to(logits.device)
+        )
+        loss = loss_fct(logits.view(-1, model.config.num_labels), labels.view(-1))
+        return (loss, outputs) if return_outputs else loss
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -216,7 +240,17 @@ def main():
     )
 
     # ── 6. Treinar ────────────────────────────────────────────────────────────
-    trainer = Trainer(
+    # Class weights: penaliza mais erros nos positivos (classe minoritária)
+    weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.array([0, 1]),
+        y=y_train,
+    )
+    class_weights = torch.tensor(weights, dtype=torch.float)
+    logger.info(f"Class weights: neg={weights[0]:.3f}, pos={weights[1]:.3f}")
+
+    trainer = WeightedTrainer(
+        class_weights=class_weights,
         model=model,
         args=training_args,
         train_dataset=train_dataset,
