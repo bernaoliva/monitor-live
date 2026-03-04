@@ -10,7 +10,7 @@ import {
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
-import { AlertTriangle, ArrowRight, X, Pin } from "lucide-react"
+import { AlertTriangle, ArrowRight, X, Pin, Volume2, VolumeOff } from "lucide-react"
 import { format } from "date-fns"
 
 
@@ -76,8 +76,8 @@ export default function LiveCard({
 }) {
   // Alturas calibradas para preencher 1080p
   // 1-3: 1 linha | 4-6: 2-3 cols, 2 linhas | 7-10: 4-5 cols, 2 linhas | 11-15: 3 linhas | 16+: 4 linhas
-  const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : liveCount <= 6 ? 125 : liveCount <= 8 ? 120 : liveCount <= 10 ? 170 : liveCount <= 15 ? 90 : 60
-  const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : liveCount <= 8 ? 135 : liveCount <= 10 ? 210 : liveCount <= 15 ? 110 : 70
+  const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : liveCount <= 6 ? 125 : liveCount <= 8 ? 120 : liveCount <= 10 ? 140 : liveCount <= 15 ? 90 : 60
+  const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : liveCount <= 8 ? 135 : liveCount <= 10 ? 160 : liveCount <= 15 ? 110 : 70
   const showCats     = true
   const compactCats  = liveCount >= 4
   const denseHeader  = liveCount >= 7
@@ -88,7 +88,43 @@ export default function LiveCard({
   const [dismissed,       setDismissed]       = useState<Set<string>>(new Set())
   const [alertKey,        setAlertKey]        = useState(0)
   const [dismissError,    setDismissError]    = useState(false)
+  const [muted,           setMuted]           = useState(live.channel?.toUpperCase() !== "CAZETV")
   const techSnapshotReadyRef = useRef(false)
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
+  const audioCtxRef = useRef<AudioContext | null>(null)
+
+  const playAlertSound = () => {
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
+      const ctx = audioCtxRef.current
+      const now = ctx.currentTime
+
+      // Alerta urgente: 3 pulsos duplos crescentes (~4s total)
+      const pulses = [
+        // pulso 1 — dois tons rápidos
+        { start: 0,    freq: 880,  dur: 0.18, vol: 0.25 },
+        { start: 0.22, freq: 1047, dur: 0.18, vol: 0.25 },
+        // pulso 2
+        { start: 1.2,  freq: 880,  dur: 0.18, vol: 0.30 },
+        { start: 1.42, freq: 1047, dur: 0.18, vol: 0.30 },
+        // pulso 3 — mais forte e longo
+        { start: 2.4,  freq: 880,  dur: 0.22, vol: 0.35 },
+        { start: 2.66, freq: 1047, dur: 0.30, vol: 0.35 },
+      ]
+      for (const p of pulses) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = "square"
+        osc.frequency.value = p.freq
+        gain.gain.setValueAtTime(p.vol, now + p.start)
+        gain.gain.exponentialRampToValueAtTime(0.001, now + p.start + p.dur)
+        osc.connect(gain).connect(ctx.destination)
+        osc.start(now + p.start)
+        osc.stop(now + p.start + p.dur + 0.05)
+      }
+    } catch {}
+  }
 
   const minuteKeyFromTs = (ts: string): string | null => {
     const m = ts.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
@@ -166,7 +202,7 @@ export default function LiveCard({
             } satisfies Comment
           })
         )
-        if (hasNew) setAlertKey((k) => k + 1)
+        if (hasNew) { setAlertKey((k) => k + 1); if (!mutedRef.current) playAlertSound() }
         techSnapshotReadyRef.current = true
       },
       (err) => console.error("[LiveCard] tech feed error:", err)
@@ -265,8 +301,7 @@ export default function LiveCard({
             >
               {live.title || live.video_id}
             </span>
-            {!ultraDense && (
-            <div className="flex items-center gap-2 mt-0.5">
+            <div className={`flex items-center gap-2 ${ultraDense ? "mt-0" : "mt-0.5"}`}>
               {live.url && (
                 <a
                   href={live.url}
@@ -275,23 +310,22 @@ export default function LiveCard({
                   title="Abrir no YouTube"
                   className="shrink-0 flex items-center gap-1 hover:opacity-70 transition-opacity text-red-500"
                 >
-                  <svg width={denseHeader ? 12 : 15} height={denseHeader ? 9 : 11} viewBox="0 0 24 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+                  <svg width={ultraDense ? 10 : denseHeader ? 12 : 15} height={ultraDense ? 7 : denseHeader ? 9 : 11} viewBox="0 0 24 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
                     <rect x="1" y="1" width="22" height="15" rx="4"/>
                     <path d="M10 5.5L16.5 8.5L10 11.5V5.5Z"/>
                   </svg>
-                  <span className={`${denseHeader ? "text-[7px]" : "text-[8px]"} font-thin tracking-widest`}>YOUTUBE</span>
+                  {!ultraDense && <span className={`${denseHeader ? "text-[7px]" : "text-[8px]"} font-thin tracking-widest`}>YOUTUBE</span>}
                 </a>
               )}
               {formatViewers(live.concurrent_viewers) && (
-                <span className={`${denseHeader ? "text-[9px]" : "text-[11px]"} text-white/80 font-mono`}>
+                <span className={`${ultraDense ? "text-[8px]" : denseHeader ? "text-[9px]" : "text-[11px]"} text-white/80 font-mono`}>
                   {formatViewers(live.concurrent_viewers)} esp.
                 </span>
               )}
-              <span className={`${denseHeader ? "text-[9px]" : "text-[11px]"} font-mono font-bold text-red-400/80`}>
-                {visibleComments.length} problemas
+              <span className={`${ultraDense ? "text-[8px]" : denseHeader ? "text-[9px]" : "text-[11px]"} font-mono font-bold text-red-400/80`}>
+                {visibleComments.length} prob.
               </span>
             </div>
-            )}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-2">
@@ -301,15 +335,24 @@ export default function LiveCard({
           >
             ABRIR <ArrowRight size={9} />
           </Link>
-          {onPin && (
+          <div className="flex flex-col items-center gap-1">
             <button
-              onClick={onPin}
-              title={isPinned ? "Desafixar" : "Fixar no topo"}
-              className={`transition-colors ${isPinned ? "text-amber-400/80 hover:text-amber-300" : "text-white/20 hover:text-white/50"}`}
+              onClick={() => setMuted((m) => !m)}
+              title={muted ? "Ativar som" : "Silenciar"}
+              className={`transition-colors ${muted ? "text-white/20 hover:text-white/50" : "text-emerald-400/80 hover:text-emerald-300"}`}
             >
-              <Pin size={11} />
+              {muted ? <VolumeOff size={11} /> : <Volume2 size={11} />}
             </button>
-          )}
+            {onPin && (
+              <button
+                onClick={onPin}
+                title={isPinned ? "Desafixar" : "Fixar no topo"}
+                className={`transition-colors ${isPinned ? "text-amber-400/80 hover:text-amber-300" : "text-white/20 hover:text-white/50"}`}
+              >
+                <Pin size={11} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -372,16 +415,16 @@ export default function LiveCard({
                 return (
                   <div
                     key={c.id}
-                    className="relative group flex items-center gap-2 px-3 h-9 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
+                    className={`relative group flex items-center gap-2 px-3 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors ${ultraDense ? "h-7" : "h-9"}`}
                   >
                     <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
-                    <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
+                    <span className={`block ${ultraDense ? "w-1 h-1" : "w-1.5 h-1.5"} rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm text-white/70 line-clamp-2 leading-tight">{c.text} <span className="text-[9px] text-white/30 font-mono">— {c.author}</span></span>
+                      <span className={`${ultraDense ? "text-[11px]" : "text-sm"} text-white/70 line-clamp-2 leading-tight`}>{c.text} <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} text-white/30 font-mono`}>— {c.author}</span></span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      {catKey && <span className={`text-[9px] font-bold font-mono ${catStyle.text}`}>{catKey}</span>}
-                      <span className="text-[10px] text-white/50 font-mono">{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
+                      {catKey && <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} font-bold font-mono ${catStyle.text}`}>{catKey}</span>}
+                      <span className={`${ultraDense ? "text-[8px]" : "text-[10px]"} text-white/50 font-mono`}>{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
                     </div>
                     <button
                       onClick={() => dismissComment(c)}

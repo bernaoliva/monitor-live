@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { ArrowLeft, ArrowRight, AlertTriangle, Pin } from "lucide-react"
+import { ArrowLeft, ArrowRight, AlertTriangle, Pin, Volume2, VolumeOff } from "lucide-react"
 import LayoutToolbar from "@/components/LayoutToolbar"
 import type { SortMode } from "@/lib/card-layout-context"
 
@@ -168,6 +168,7 @@ function MockCard({
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
 }) {
+  const [muted, setMuted] = useState(live.channel.toUpperCase() !== "CAZETV")
   const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : 125
   const commentsMaxH = liveCount === 1 ? 440 : liveCount === 2 ? 340 : liveCount <= 3 ? 260 : liveCount <= 6 ? 138 : 150
   const showCats    = true
@@ -229,13 +230,22 @@ function MockCard({
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-2">
           <span className="flex items-center gap-0.5 text-[9px] font-bold font-mono text-white/30">ABRIR <ArrowRight size={9} /></span>
-          <button
-            onClick={onPin}
-            title={isPinned ? "Desafixar" : "Fixar no topo"}
-            className={`transition-colors ${isPinned ? "text-amber-400/80 hover:text-amber-300" : "text-white/20 hover:text-white/50"}`}
-          >
-            <Pin size={11} />
-          </button>
+          <div className="flex flex-col items-center gap-1">
+            <button
+              onClick={() => setMuted((m) => !m)}
+              title={muted ? "Ativar som" : "Silenciar"}
+              className={`transition-colors ${muted ? "text-white/20 hover:text-white/50" : "text-emerald-400/80 hover:text-emerald-300"}`}
+            >
+              {muted ? <VolumeOff size={11} /> : <Volume2 size={11} />}
+            </button>
+            <button
+              onClick={onPin}
+              title={isPinned ? "Desafixar" : "Fixar no topo"}
+              className={`transition-colors ${isPinned ? "text-amber-400/80 hover:text-amber-300" : "text-white/20 hover:text-white/50"}`}
+            >
+              <Pin size={11} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -334,6 +344,34 @@ export default function DevPreviewPage() {
   const [draggingId, setDraggingId]   = useState<string | null>(null)
   const [dragOverId, setDragOverId]   = useState<string | null>(null)
   const [dismissed, setDismissed]     = useState<Set<string>>(new Set())
+  const audioCtxRef = useRef<AudioContext | null>(null)
+
+  const playAlertSound = () => {
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
+      const ctx = audioCtxRef.current
+      const now = ctx.currentTime
+      const pulses = [
+        { start: 0,    freq: 880,  dur: 0.18, vol: 0.25 },
+        { start: 0.22, freq: 1047, dur: 0.18, vol: 0.25 },
+        { start: 1.2,  freq: 880,  dur: 0.18, vol: 0.30 },
+        { start: 1.42, freq: 1047, dur: 0.18, vol: 0.30 },
+        { start: 2.4,  freq: 880,  dur: 0.22, vol: 0.35 },
+        { start: 2.66, freq: 1047, dur: 0.30, vol: 0.35 },
+      ]
+      for (const p of pulses) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = "square"
+        osc.frequency.value = p.freq
+        gain.gain.setValueAtTime(p.vol, now + p.start)
+        gain.gain.exponentialRampToValueAtTime(0.001, now + p.start + p.dur)
+        osc.connect(gain).connect(ctx.destination)
+        osc.start(now + p.start)
+        osc.stop(now + p.start + p.dur + 0.05)
+      }
+    } catch {}
+  }
 
   const allLives = MOCK_LIVES.slice(0, count).filter((l) => !dismissed.has(l.video_id))
 
@@ -400,6 +438,12 @@ export default function DevPreviewPage() {
           <span className="text-[10px] text-white/20 font-mono">{modeLabel}</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={playAlertSound}
+            className="flex items-center gap-1 px-2 h-7 rounded bg-white/[0.04] text-white/35 hover:bg-white/[0.08] hover:text-white/60 transition-all text-[10px] font-mono"
+          >
+            <Volume2 size={12} /> Testar Som
+          </button>
           <span className="text-[10px] text-white/30 font-mono">lives:</span>
           <div className="flex gap-1">
             {COUNTS.map((n) => (
