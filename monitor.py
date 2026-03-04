@@ -829,9 +829,9 @@ _KEYWORD_FALLBACK = [
     # RISCO: muito baixo — "vascou" em chat de live é sempre sobre a transmissão
     (re.compile(r"\bvascou\b|\bvascand|\bvai\s+vascar\b", re.I),
                                                                             "REDE",  "conexao",          "high"),
-    # Não pagou a internet: piada técnica = stream com problema de conexão
+    # Não pagou / pagou a internet?: piada técnica = stream com problema de conexão
     # RISCO: muito baixo — sempre referência a problema na transmissão
-    (re.compile(r"(?:n[ãa]o|n)\s+(?:pagou?|paga)\s+(?:a\s+|o\s+)?(?:internet|wifi|wi-?fi|net\b)|pag(?:a|ue)\s+(?:a\s+)?(?:internet|wifi|wi-?fi)", re.I),
+    (re.compile(r"(?:n[ãa]o|n)\s+(?:pagou?|paga)\s+(?:a\s+|o\s+)?(?:internet|wifi|wi-?fi|net\b)|pag(?:a|ue)\s+(?:a\s+)?(?:internet|wifi|wi-?fi)|pagou\s+(?:a\s+|o\s+)?(?:internet|wifi|wi-?fi|net\b)", re.I),
                                                                             "REDE",  "conexao",          "medium"),
 ]
 
