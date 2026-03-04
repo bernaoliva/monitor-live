@@ -102,6 +102,40 @@ def upload_to_gcs(local_path, bucket_name, gcs_path):
         return False
 
 
+def balance_dataset(rows, target_pos_ratio=0.30):
+    """Undersample negativos para atingir ratio alvo de positivos."""
+    import unicodedata as _ud
+    positives = [(t, l) for t, l in rows if l == 1]
+    negatives = [(t, l) for t, l in rows if l == 0]
+
+    current_ratio = len(positives) / len(rows) if rows else 0
+    if current_ratio >= target_pos_ratio:
+        return rows  # ja balanceado
+
+    # Augmentation leve nos positivos
+    seen_texts = {_ud.normalize("NFC", t.strip().lower()) for t, _ in rows}
+    augmented = []
+    suffixes = [" aqui tb", " mano", " gente", " de novo", "!!!"]
+    for text, _ in positives:
+        for suf in suffixes:
+            aug = (text + suf).strip()
+            key = _ud.normalize("NFC", aug.strip().lower())
+            if key not in seen_texts and len(aug) < 200:
+                seen_texts.add(key)
+                augmented.append((aug, 1))
+    positives_aug = positives + augmented
+
+    # Calcula quantos negativos manter
+    target_neg = int(len(positives_aug) / target_pos_ratio - len(positives_aug))
+    target_neg = min(target_neg, len(negatives))
+    random.shuffle(negatives)
+    negatives_kept = negatives[:target_neg]
+
+    result = positives_aug + negatives_kept
+    random.shuffle(result)
+    return result
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Merge sinteticos + reais para retreino")
     p.add_argument("--synthetic", default=SYNTHETIC_FILE,
@@ -114,6 +148,8 @@ def parse_args():
                    help="Upload para GCS apos merge")
     p.add_argument("--bucket", default=GCS_BUCKET,
                    help=f"Bucket GCS (default: {GCS_BUCKET})")
+    p.add_argument("--balance", action="store_true",
+                   help="Balancear dataset para ~30%% positivos (undersample neg + augment pos)")
     return p.parse_args()
 
 
@@ -137,8 +173,13 @@ def main():
     unique = deduplicate(all_rows)
     print(f"Apos deduplicacao: {len(unique)}")
 
-    # 4. Shuffle
-    random.shuffle(unique)
+    # 4. Balancear (opcional)
+    if args.balance:
+        before_total = len(unique)
+        unique = balance_dataset(unique, target_pos_ratio=0.30)
+        print(f"Apos balanceamento: {len(unique)} (era {before_total})")
+    else:
+        random.shuffle(unique)
 
     # 5. Estatisticas
     pos = sum(1 for _, l in unique if l == 1)

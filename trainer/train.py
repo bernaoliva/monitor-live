@@ -19,13 +19,11 @@ import shutil
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 from google.cloud import storage
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
-from sklearn.utils.class_weight import compute_class_weight
 from torch.utils.data import Dataset
 from transformers import (
     DistilBertForSequenceClassification,
@@ -52,9 +50,9 @@ def parse_args():
                    help="Caminho GCS do CSV: gs://bucket/path/training_data.csv")
     p.add_argument("--model_name", default="distilbert-base-multilingual-cased",
                    help="Modelo base do HuggingFace Hub")
-    p.add_argument("--epochs",        type=int,   default=6)
+    p.add_argument("--epochs",        type=int,   default=8)
     p.add_argument("--batch_size",    type=int,   default=32)
-    p.add_argument("--learning_rate", type=float, default=2e-5)
+    p.add_argument("--learning_rate", type=float, default=1e-5)
     p.add_argument("--max_len",       type=int,   default=64,
                    help="Máximo de tokens por comentário (64 é suficiente para chat)")
     p.add_argument("--warmup_ratio",  type=float, default=0.1)
@@ -103,28 +101,6 @@ def gcs_upload_dir(local_dir: str, gcs_dir: str):
     except Exception as e:
         logger.error(f"Erro ao fazer upload para {gcs_dir}: {e}")
         raise
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TRAINER COM CLASS WEIGHTS (corrige desbalanceamento)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class WeightedTrainer(Trainer):
-    """Trainer que aplica class weights no cross-entropy loss."""
-
-    def __init__(self, class_weights: torch.Tensor, **kwargs):
-        super().__init__(**kwargs)
-        self.class_weights = class_weights
-
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        labels  = inputs.get("labels")
-        outputs = model(**inputs)
-        logits  = outputs.get("logits")
-        loss_fct = torch.nn.CrossEntropyLoss(
-            weight=self.class_weights.to(logits.device)
-        )
-        loss = loss_fct(logits.view(-1, model.config.num_labels), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,35 +204,28 @@ def main():
         learning_rate=args.learning_rate,
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
+        evaluation_strategy="steps",
+        eval_steps=100,
+        save_strategy="steps",
+        save_steps=100,
         load_best_model_at_end=True,
         metric_for_best_model="f1",
         greater_is_better=True,
-        logging_steps=20,
+        save_total_limit=3,
+        logging_steps=50,
         dataloader_num_workers=0,
         report_to="none",      # desativa wandb/tensorboard
         no_cuda=not use_gpu,
     )
 
     # ── 6. Treinar ────────────────────────────────────────────────────────────
-    # Class weights: penaliza mais erros nos positivos (classe minoritária)
-    weights = compute_class_weight(
-        class_weight="balanced",
-        classes=np.array([0, 1]),
-        y=y_train,
-    )
-    class_weights = torch.tensor(weights, dtype=torch.float)
-    logger.info(f"Class weights: neg={weights[0]:.3f}, pos={weights[1]:.3f}")
-
-    trainer = WeightedTrainer(
-        class_weights=class_weights,
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
     )
 
     logger.info("=== Iniciando treinamento ===")
