@@ -32,10 +32,30 @@ CLAUDE.md
 
 # === SCRIPTS UTILITÁRIOS (one-time) ===
 backfill_minutes.py
+reprocess_live.py
+add_test_lives.py
+delete_test_lives.py
+fix_false_positives.py
+dashboard/add-test-lives.mjs
+
+# === SCRIPTS / DADOS DE DEBUG ===
+__*.py
+__*.json
+*.png
 
 # === DEBUG ===
 debug_html/
 debug_logs/
+
+# === TRAINING DATA (intermediário / bruto) ===
+training/real_comments_raw.csv
+training/real_comments_sample.csv
+training/real_comments_gpt_labeled.csv
+training/real_comments_labeled.csv
+training/training_data_backup_sintetico.csv
+training/label_with_gpt.py
+training/review_gpt_labels.py
+training/sample_for_labeling.py
 
 # === OS ===
 .DS_Store
