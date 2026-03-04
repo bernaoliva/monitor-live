@@ -375,10 +375,15 @@ def safe_get(url: str, params: Optional[dict] = None, timeout: int = SCRAPE_TIME
         _log_debug(f"safe_get error for {url}: {e}")
         return None
 
-@functools.lru_cache(maxsize=64)
+_oembed_cache: Dict[str, tuple] = {}  # video_id -> (title, timestamp)
+OEMBED_TTL = 120.0  # re-busca título a cada 2 minutos
+
 def oembed_title(video_id: str) -> str:
+    cached = _oembed_cache.get(video_id)
+    if cached and (time.time() - cached[1]) < OEMBED_TTL:
+        return cached[0]
     if time.time() < _rate_limited_until:
-        return video_id  # IP bloqueado — não fazer chamada HTTP
+        return cached[0] if cached else video_id
     try:
         o = SESSION.get(
             "https://www.youtube.com/oembed",
@@ -386,9 +391,13 @@ def oembed_title(video_id: str) -> str:
             timeout=6,
         )
         if o.status_code == 200:
-            return o.json().get("title", video_id)
+            t = o.json().get("title", video_id)
+            _oembed_cache[video_id] = (t, time.time())
+            return t
     except Exception:
         pass
+    if cached:
+        return cached[0]
     return video_id
 
 # ─── LIVE DISCOVERY ──────────────────────────────────────────────────────────
@@ -789,11 +798,41 @@ _KEYWORD_FALLBACK = [
     # "congelando" só como técnico se vier junto com contexto de tela/vídeo
     (re.compile(r"(?:tela|imagem|video|vídeo|transmiss)[^\n]{0,30}congel|congel[^\n]{0,30}(?:tela|imagem|video|vídeo|transmiss)", re.I),
                                                                             "VIDEO", "qualidade_video",  "medium"),
-    (re.compile(r"\b(?:buffering|buffer|live\s+caiu|caiu\s+a\s+live|erro\s+ao\s+abrir)\b", re.I),
+    (re.compile(r"\b(?:buffering|buffer|live\s+caiu|caiu\s+a\s+live|live\s+foi\s+de\b|erro\s+ao\s+abrir)\b", re.I),
                                                                             "REDE",  "conexao",          "high"),
-    # Sinal: "sem sinal", "sinal caiu", "cade o sinal", "perderam o sinal", "sinal ruim"
-    (re.compile(r"\b(?:sem\s+sinal|sinal\s+(?:caiu|ruim|horrivel|horrível|péssim|pessim|cortou|sumiu|perdid)|(?:cadê|cade|perderam|perdeu)\s+(?:o\s+)?sinal)\b", re.I),
+    # Sinal: "sem sinal", "sinal caiu", "cade o sinal", "perderam o sinal", "sinal ruim/zoado", "F sinal"
+    (re.compile(r"\b(?:sem\s+sinal|sinal\s+(?:caiu|ruim|horrivel|horrível|péssim|pessim|cortou|sumiu|perdid|zoad)|(?:cadê|cade|perderam|perdeu)\s+(?:o\s+)?sinal|f\s+(?:pro?\s+)?sinal)\b", re.I),
                                                                             "REDE",  "sem_sinal",        "high"),
+    # Delay com intensidade: "delay gigante", "delay de 20seg", "delay absurdo"
+    # RISCO: "delay + adjetivo de jogador" (ex: "delay enorme do goleiro") — improvável em chat
+    # NÃO matcha "delay do Bobadilha" (sem intensificador)
+    (re.compile(r"\bdelay\s+(?:gigant|enorm|absurd|demais|imenso|horr[ií]vel|insuport[aá]vel|de\s+\d+|d[+]+)", re.I),
+                                                                            "REDE",  "delay",            "medium"),
+    # Travou: com negative lookahead para contexto esportivo (zaga, defesa, atacante, lance)
+    # RISCO: "travou o jogo" é ambíguo (tela travou vs parou a partida) — aceito como técnico
+    (re.compile(r"\btravou\b(?!\s+(?:a\s+zag|a\s+defes|o\s+atacant|o\s+lanc|a\s+jogad|na\s+hora|no\s+lance|o\s+golei))", re.I),
+                                                                            "VIDEO", "qualidade_video",  "medium"),
+    # Lagando: "ta lagando", "lagou tudo"
+    # RISCO: "ta lagando o atacante" — improvável em chat do YouTube
+    (re.compile(r"\blagand|\blagou\b", re.I),
+                                                                            "REDE",  "conexao",          "medium"),
+    # Áudio dessincronizado/adiantado/atrasado
+    # RISCO: muito baixo — reclamação de sync é sempre técnica
+    (re.compile(r"\b(?:audio|áudio|som)\s+(?:.*\s+)?(?:adiantad|atrasad|dessincronizad|desincronizad|fora\s+de\s+sinc)", re.I),
+                                                                            "AUDIO", "audio_dessincronizado", "medium"),
+    # "F áudio", "F sinal", "F internet", "F live", "F transmissão" — gíria internet (= morreu/caiu)
+    # "F" isolado ou sem contexto técnico NÃO entra aqui
+    (re.compile(
+        r"\bf\s+(?:pro?\s+)?(?:audio|áudio|som|sinal|internet|wi-?fi|live|transmiss|stream|rede)(?:\b|[aã])",
+        re.I),                                                              "REDE",  "conexao",          "high"),
+    # Vascou: gíria = live caiu/falhou
+    # RISCO: muito baixo — "vascou" em chat de live é sempre sobre a transmissão
+    (re.compile(r"\bvascou\b|\bvascand|\bvai\s+vascar\b", re.I),
+                                                                            "REDE",  "conexao",          "high"),
+    # Não pagou a internet: piada técnica = stream com problema de conexão
+    # RISCO: muito baixo — sempre referência a problema na transmissão
+    (re.compile(r"(?:n[ãa]o|n)\s+(?:pagou?|paga)\s+(?:a\s+|o\s+)?(?:internet|wifi|wi-?fi|net\b)|pag(?:a|ue)\s+(?:a\s+)?(?:internet|wifi|wi-?fi)", re.I),
+                                                                            "REDE",  "conexao",          "medium"),
 ]
 
 def _keyword_override(text: str) -> Optional[dict]:
@@ -808,8 +847,9 @@ _TECH_KEYWORDS = re.compile(
     r"(?:"
     r"\b(?:audio|áudio)\b|\bsom\b|\bnarr|\bmicrofone|\bmic\b"  # áudio
     r"|\b(?:video|vídeo)\b|\btela\b|\bimagem\b|\bpixel|\bqualidade\b"  # vídeo
-    r"|\btravand|\btravan|\bfreez"                               # travamento (congel removido — ambíguo com clima)
-    r"|\bbuffer|\blag\b|\bping\b|\bcaiu\b|\bcarregan|\bloadin"  # rede
+    r"|\btravand|\btravan|\btravou\b|\btravad|\bfreez"             # travamento (congel removido — ambíguo com clima)
+    r"|\bbuffer|\blag\b|\blagand|\blagou\b|\bping\b|\bcaiu\b|\bcarregan|\bloadin|\bvascou\b|\bvascand"  # rede
+    r"|\blive\s+foi\s+de\b"                                               # "live foi de vasco" = caiu
     r"|\bsinal\b"                                                  # sinal
     r"|\bsem\s+(?:som|audio|áudio|video|vídeo|imagem|sinal)"    # ausência
     r"|\bcortand|\bestouran|\bestourad|\bchian|\bruído|\beco\b"  # distorção
@@ -817,6 +857,7 @@ _TECH_KEYWORDS = re.compile(
     r"|\bplacar\b|\bgc\b"                                       # GC
     r"|\bmudo|\bmuta|\bdessincroni|\batraso|\badianta|\bdelay"   # sincronia
     r"|\bvazand|\bvazou\b|\bvazamento"                          # vazamento de áudio
+    r"|\bf\s+(?:audio|áudio|som|sinal|internet|live|transmiss|stream)"  # "F áudio/sinal/live" (gíria)
     r")",
     re.I,
 )
@@ -1422,10 +1463,11 @@ def queue_consumer_loop(q: Queue):
             elif t == "heartbeat":
                 vid   = item["video_id"]
                 ch    = item["channel"]
-                title = _best_title(vid, item.get("title") or "")
                 url   = item.get("url", f"https://www.youtube.com/watch?v={vid}")
-                if not title and time.time() >= _rate_limited_until:
-                    title = _best_title(vid, oembed_title(vid))
+                # Sempre tenta oembed (cache com TTL de 2min) para pegar mudanças de título
+                title = _best_title(vid, oembed_title(vid))
+                if not title:
+                    title = _best_title(vid, item.get("title") or "")
                 fs_upsert_live(vid, ch, title, url)
 
             elif t == "chat":
