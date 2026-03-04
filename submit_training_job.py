@@ -40,7 +40,10 @@ def parse_args():
     p.add_argument("--epochs",       type=int, default=6)
     p.add_argument("--batch_size",   type=int, default=32)
     p.add_argument("--use_gpu",      action="store_true",
-                   help="Usar GPU T4 (mais rapido, custo similar ao CPU)")
+                   help="Usar GPU A100 (mais rapido, custo similar ao CPU)")
+    p.add_argument("--gpu_type",     default="L4",
+                   choices=["T4", "L4", "V100", "A100"],
+                   help="Tipo de GPU (default: A100)")
     return p.parse_args()
 
 
@@ -60,7 +63,8 @@ def main():
     print(f"  Project : {args.project_id}")
     print(f"  Bucket  : gs://{args.bucket_name}")
     print(f"  Regiao  : {args.region}")
-    print(f"  Modo    : {'GPU (T4)' if args.use_gpu else 'CPU'}")
+    gpu_label = f"GPU ({args.gpu_type})" if args.use_gpu else "CPU"
+    print(f"  Modo    : {gpu_label}")
     print(f"  Epochs  : {args.epochs}")
     print("=" * 60)
 
@@ -115,12 +119,14 @@ def main():
     ]
 
     # Configurações de máquina
+    GPU_CONFIGS = {
+        "T4":   ("n1-standard-4",  "NVIDIA_TESLA_T4",   1, "30-60 min", "~$0.35"),
+        "L4":   ("g2-standard-4",  "NVIDIA_L4",         1, "20-40 min", "~$0.70"),
+        "V100": ("n1-standard-8",  "NVIDIA_TESLA_V100", 1, "15-30 min", "~$1.20"),
+        "A100": ("a2-highgpu-1g",  "NVIDIA_TESLA_A100", 1, "10-20 min", "~$2.00"),
+    }
     if args.use_gpu:
-        machine_type       = "n1-standard-4"   # 4 vCPUs, 15GB RAM
-        accelerator_type   = "NVIDIA_TESLA_T4"
-        accelerator_count  = 1
-        est_time  = "30-60 min"
-        est_cost  = "~$0.35"
+        machine_type, accelerator_type, accelerator_count, est_time, est_cost = GPU_CONFIGS[args.gpu_type]
     else:
         machine_type       = "n1-standard-8"   # 8 vCPUs, 30GB RAM
         accelerator_type   = None
