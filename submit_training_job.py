@@ -123,7 +123,7 @@ def main():
         "T4":   ("n1-standard-4",  "NVIDIA_TESLA_T4",   1, "30-60 min", "~$0.35"),
         "L4":   ("g2-standard-4",  "NVIDIA_L4",         1, "20-40 min", "~$0.70"),
         "V100": ("n1-standard-8",  "NVIDIA_TESLA_V100", 1, "15-30 min", "~$1.20"),
-        "A100": ("a2-highgpu-1g",  "NVIDIA_TESLA_A100", 1, "10-20 min", "~$2.00"),
+        "A100": ("a2-ultragpu-1g", "NVIDIA_A100_80GB", 1, "10-20 min", "~$3.00"),
     }
     if args.use_gpu:
         machine_type, accelerator_type, accelerator_count, est_time, est_cost = GPU_CONFIGS[args.gpu_type]

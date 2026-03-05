@@ -103,8 +103,7 @@ def upload_to_gcs(local_path, bucket_name, gcs_path):
 
 
 def balance_dataset(rows, target_pos_ratio=0.30):
-    """Undersample negativos para atingir ratio alvo de positivos."""
-    import unicodedata as _ud
+    """Undersample negativos para atingir ratio alvo de positivos (sem augmentation)."""
     positives = [(t, l) for t, l in rows if l == 1]
     negatives = [(t, l) for t, l in rows if l == 0]
 
@@ -112,26 +111,13 @@ def balance_dataset(rows, target_pos_ratio=0.30):
     if current_ratio >= target_pos_ratio:
         return rows  # ja balanceado
 
-    # Augmentation leve nos positivos
-    seen_texts = {_ud.normalize("NFC", t.strip().lower()) for t, _ in rows}
-    augmented = []
-    suffixes = [" aqui tb", " mano", " gente", " de novo", "!!!"]
-    for text, _ in positives:
-        for suf in suffixes:
-            aug = (text + suf).strip()
-            key = _ud.normalize("NFC", aug.strip().lower())
-            if key not in seen_texts and len(aug) < 200:
-                seen_texts.add(key)
-                augmented.append((aug, 1))
-    positives_aug = positives + augmented
-
-    # Calcula quantos negativos manter
-    target_neg = int(len(positives_aug) / target_pos_ratio - len(positives_aug))
+    # Apenas undersample dos negativos — sem augmentation
+    target_neg = int(len(positives) / target_pos_ratio - len(positives))
     target_neg = min(target_neg, len(negatives))
     random.shuffle(negatives)
     negatives_kept = negatives[:target_neg]
 
-    result = positives_aug + negatives_kept
+    result = positives + negatives_kept
     random.shuffle(result)
     return result
 
