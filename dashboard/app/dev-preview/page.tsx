@@ -219,11 +219,11 @@ function MockCard({
                 </svg>
                 <span className={`${denseHeader ? "text-[7px]" : "text-[8px]"} font-thin tracking-widest`}>YOUTUBE</span>
               </a>
-              <span className={`${denseHeader ? "text-[9px]" : "text-[11px]"} text-white/80 font-mono`}>
+              <span className={`${denseHeader ? "text-[10px]" : "text-[12px]"} text-white/80 font-mono`}>
                 {formatViewers(live.viewers)} esp.
               </span>
-              <span className={`${denseHeader ? "text-[9px]" : "text-[11px]"} font-mono font-bold text-red-400/80`}>
-                {live.tech_count} problemas
+              <span className={`${denseHeader ? "text-[10px]" : "text-[12px]"} font-mono text-red-400/80`}>
+                {live.tech_count} prob.
               </span>
             </div>
           </div>

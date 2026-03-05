@@ -297,7 +297,7 @@ export default function LiveCard({
           </div>
           <div className="min-w-0 flex-1">
             <span
-              className={`font-bold text-white leading-tight block ${ultraDense ? "text-[9px] line-clamp-1 min-h-[14px]" : denseHeader ? "text-[10px] line-clamp-1 min-h-[16px]" : "text-[12px] line-clamp-2 min-h-[30px]"}`}
+              className={`font-bold text-white leading-tight block ${ultraDense ? "text-[9px] line-clamp-1" : denseHeader ? "text-[10px] line-clamp-1" : "text-[12px] line-clamp-2"}`}
             >
               {live.title || live.video_id}
             </span>
@@ -318,11 +318,11 @@ export default function LiveCard({
                 </a>
               )}
               {formatViewers(live.concurrent_viewers) && (
-                <span className={`${ultraDense ? "text-[8px]" : denseHeader ? "text-[9px]" : "text-[11px]"} text-white/80 font-mono`}>
+                <span className={`${ultraDense ? "text-[9px]" : denseHeader ? "text-[10px]" : "text-[12px]"} text-white/80 font-mono`}>
                   {formatViewers(live.concurrent_viewers)} esp.
                 </span>
               )}
-              <span className={`${ultraDense ? "text-[8px]" : denseHeader ? "text-[9px]" : "text-[11px]"} font-mono font-bold text-red-400/80`}>
+              <span className={`${ultraDense ? "text-[9px]" : denseHeader ? "text-[10px]" : "text-[12px]"} font-mono text-red-400/80`}>
                 {visibleComments.length} prob.
               </span>
             </div>
