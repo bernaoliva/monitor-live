@@ -76,8 +76,7 @@ export default function CommentsChart({ data, height = 220, showLegend = true, o
         margin={{ top: 4, right: 8, left: -20, bottom: showLegend ? 28 : 12 }}
         style={onMinuteClick ? { cursor: "pointer" } : undefined}
         onClick={onMinuteClick ? (e) => {
-          const pt = e?.activePayload?.[0]?.payload as ChartPoint | undefined
-          if (pt && pt.technical > 0 && e.activeLabel) onMinuteClick(e.activeLabel as string)
+          if (e?.activeLabel) onMinuteClick(e.activeLabel as string)
         } : undefined}
       >
         <defs>
