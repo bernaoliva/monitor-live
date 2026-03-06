@@ -240,10 +240,16 @@ export default function LiveCard({
     [live.concurrent_viewers, visibleComments, chartDataDisplay],
   )
 
+  const [ytFeedback, setYtFeedback] = useState<string | null>(null)
+
   const handleMinuteClick = useCallback((minuteKey: string) => {
     if (!live.url || !live.started_at) return
     const url = youtubeTimestampUrl(live.url, live.started_at, minuteKey)
-    if (url) window.open(url, "_blank", "noopener,noreferrer")
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer")
+      setYtFeedback(minuteKey.slice(-5))
+      setTimeout(() => setYtFeedback(null), 2500)
+    }
   }, [live.url, live.started_at])
 
   const categoryBreakdown = useMemo(() => {
@@ -393,6 +399,12 @@ export default function LiveCard({
         )}
         <div className="relative z-[1]">
           <CommentsChart data={chartDataDisplay} height={chartHeight} showLegend={false} onMinuteClick={handleMinuteClick} />
+          {ytFeedback && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none flex items-center gap-1.5 bg-black/80 border border-red-500/40 rounded-lg px-3 py-1.5 text-[11px] font-mono text-red-400 shadow-xl">
+              <span>↗ YouTube</span>
+              <span className="font-bold">{ytFeedback}</span>
+            </div>
+          )}
           <div className="absolute top-0 left-0 z-10 pointer-events-none flex items-center leading-none" style={{ gap: 2 }}>
             <div className="flex flex-col items-center" style={{ gap: 2 }}>
               {chartHeight >= 90 ? (

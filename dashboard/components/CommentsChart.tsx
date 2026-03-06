@@ -36,18 +36,17 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   )
 }
 
-function makeTechDot(onMinuteClick?: (minute: string) => void) {
+function makeTechDot(clickable: boolean) {
   // eslint-disable-next-line react/display-name
   return (props: Record<string, unknown>) => {
     const { cx, cy, payload } = props as { cx: number; cy: number; payload: ChartPoint }
     if (!payload || payload.technical === 0) return <g />
     return (
       <circle
-        cx={cx} cy={cy} r={onMinuteClick ? 5 : 3.5}
+        cx={cx} cy={cy} r={clickable ? 5 : 3.5}
         fill="#ef4444" fillOpacity={0.85}
         stroke="#fff" strokeWidth={1} strokeOpacity={0.3}
-        style={onMinuteClick ? { cursor: "pointer" } : undefined}
-        onClick={onMinuteClick ? (e) => { e.stopPropagation(); onMinuteClick(payload.minute) } : undefined}
+        style={clickable ? { cursor: "pointer" } : undefined}
       />
     )
   }
@@ -72,7 +71,15 @@ export default function CommentsChart({ data, height = 220, showLegend = true, o
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: showLegend ? 28 : 12 }}>
+      <AreaChart
+        data={data}
+        margin={{ top: 4, right: 8, left: -20, bottom: showLegend ? 28 : 12 }}
+        style={onMinuteClick ? { cursor: "pointer" } : undefined}
+        onClick={onMinuteClick ? (e) => {
+          const pt = e?.activePayload?.[0]?.payload as ChartPoint | undefined
+          if (pt && pt.technical > 0 && e.activeLabel) onMinuteClick(e.activeLabel as string)
+        } : undefined}
+      >
         <defs>
           <linearGradient id={gradTotalId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3} />
@@ -122,7 +129,7 @@ export default function CommentsChart({ data, height = 220, showLegend = true, o
           stroke="#ef4444"
           strokeWidth={2}
           fill={`url(#${gradTechId})`}
-          dot={makeTechDot(onMinuteClick)}
+          dot={makeTechDot(!!onMinuteClick)}
           isAnimationActive={false}
         />
       </AreaChart>
