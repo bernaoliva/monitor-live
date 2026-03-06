@@ -415,42 +415,6 @@ export default function LiveCard({
         </div>
       </div>
 
-      {/* Stats: Audiência + Score */}
-      {!ultraDense && (
-        <div className={`px-3 flex items-start gap-5 border-t border-white/[0.04] ${compactCats ? "py-1" : "py-1.5"}`}>
-          <div>
-            <p className={`font-bold font-mono uppercase tracking-widest text-white/30 ${compactCats ? "text-[6px]" : "text-[7px]"}`}>Audiência</p>
-            <div className={`flex items-end gap-2.5 mt-0.5`}>
-              <div className="flex flex-col items-center">
-                <span className={`font-bold font-mono text-white/75 ${compactCats ? "text-[10px]" : "text-[12px]"}`}>
-                  {formatViewers(live.concurrent_viewers) ?? "—"}
-                </span>
-                <span className="text-[6px] font-mono text-white/30 uppercase tracking-wide">atual</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className={`font-bold font-mono text-white/30 ${compactCats ? "text-[10px]" : "text-[12px]"}`}>—</span>
-                <span className="text-[6px] font-mono text-white/30 uppercase tracking-wide">pico</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className={`font-bold font-mono text-white/30 ${compactCats ? "text-[10px]" : "text-[12px]"}`}>—</span>
-                <span className="text-[6px] font-mono text-white/30 uppercase tracking-wide">média</span>
-              </div>
-            </div>
-          </div>
-          <div>
-            <p className={`font-bold font-mono uppercase tracking-widest text-white/30 ${compactCats ? "text-[6px]" : "text-[7px]"}`}>Score</p>
-            <div className="flex items-end gap-1 mt-0.5">
-              <span className={`font-bold font-mono ${compactCats ? "text-[10px]" : "text-[12px]"}`} style={{ color: healthScore.color }}>
-                {healthScore.score}
-              </span>
-              <span className={`font-bold font-mono ${compactCats ? "text-[8px]" : "text-[9px]"}`} style={{ color: healthScore.color, opacity: 0.75 }}>
-                {healthScore.level}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Pills de categoria — só para 4-6 lives */}
       {showCats && compactCats && (
         <div className={`px-3 flex items-center gap-1.5 flex-wrap border-t border-white/[0.04] ${ultraDense ? "py-1 min-h-[22px]" : "py-1.5 min-h-[28px]"}`}>
