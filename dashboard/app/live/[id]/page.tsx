@@ -101,17 +101,18 @@ export default function LivePage() {
       setNotFound(false)
       const d = snap.data()
       setLive({
-        video_id:           snap.id,
-        channel:            d.channel            ?? "",
-        title:              d.title              ?? snap.id,
-        url:                d.url                ?? "",
-        status:             d.status             ?? "ended",
-        started_at:         d.started_at         ?? "",
-        ended_at:           d.ended_at           ?? null,
-        last_seen_at:       d.last_seen_at       ?? "",
-        total_comments:     d.total_comments     ?? 0,
-        technical_comments: d.technical_comments ?? 0,
-        issue_counts:       d.issue_counts       ?? {},
+        video_id:            snap.id,
+        channel:             d.channel             ?? "",
+        title:               d.title               ?? snap.id,
+        url:                 d.url                 ?? "",
+        status:              d.status              ?? "ended",
+        started_at:          d.started_at          ?? "",
+        ended_at:            d.ended_at            ?? null,
+        last_seen_at:        d.last_seen_at        ?? "",
+        total_comments:      d.total_comments      ?? 0,
+        technical_comments:  d.technical_comments  ?? 0,
+        issue_counts:        d.issue_counts        ?? {},
+        concurrent_viewers:  d.concurrent_viewers  ?? undefined,
       } satisfies Live)
     })
 
