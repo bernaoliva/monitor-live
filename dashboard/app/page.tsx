@@ -116,6 +116,7 @@ export default function HomePage() {
             issue_counts:       d.issue_counts       ?? {},
             concurrent_viewers: d.concurrent_viewers ?? null,
             gpu_active:         d.gpu_active         ?? false,
+            title_history:      d.title_history      ?? undefined,
           } satisfies Live
         })
 

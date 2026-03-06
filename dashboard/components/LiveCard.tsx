@@ -310,6 +310,11 @@ export default function LiveCard({
               className={`font-bold text-white leading-tight block ${ultraDense ? "text-[9px] line-clamp-1" : denseHeader ? "text-[10px] line-clamp-1" : "text-[12px] line-clamp-2"}`}
             >
               {live.title || live.video_id}
+              {!ultraDense && !denseHeader && live.title_history && live.title_history.length > 1 && (
+                <span className="ml-1.5 text-[8px] text-white/25 font-mono font-normal align-middle">
+                  +{live.title_history.length - 1} título{live.title_history.length - 1 > 1 ? "s" : ""}
+                </span>
+              )}
             </span>
             <div className={`flex items-center gap-2 ${ultraDense ? "mt-0" : "mt-0.5"}`}>
               {live.url && (

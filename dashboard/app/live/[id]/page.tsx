@@ -113,6 +113,7 @@ export default function LivePage() {
         technical_comments:  d.technical_comments  ?? 0,
         issue_counts:        d.issue_counts        ?? {},
         concurrent_viewers:  d.concurrent_viewers  ?? undefined,
+        title_history:       d.title_history       ?? undefined,
       } satisfies Live)
     })
 
@@ -256,6 +257,17 @@ export default function LivePage() {
           <h1 className="text-[15px] font-bold text-white leading-tight max-w-2xl">
             {live?.title ?? id}
           </h1>
+          {live?.title_history && live.title_history.length > 1 && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {live.title_history
+                .filter((t) => t !== live.title)
+                .map((t, i) => (
+                  <span key={i} className="text-[9px] text-white/25 font-mono bg-white/[0.03] border border-white/[0.06] rounded px-1.5 py-0.5 line-clamp-1 max-w-[280px]">
+                    {t}
+                  </span>
+                ))}
+            </div>
+          )}
           <div className="flex items-center gap-2.5 flex-wrap">
             {live?.status === "active" ? (
               <span className="tag bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
