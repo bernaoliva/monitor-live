@@ -311,7 +311,7 @@ export default function LivePage() {
             ] as { label: string; val: number | null }[]).map(({ label, val }) => (
               <div key={label} className="flex flex-col items-center">
                 <span className={`font-data text-xl font-bold ${val ? "text-white/75" : "text-white/25"}`}>
-                  {val ? (val >= 1_000_000 ? `${(val / 1_000_000).toFixed(1)}M` : val >= 1_000 ? `${(val / 1_000).toFixed(0)}k` : String(val)) : "—"}
+                  {val ? val.toLocaleString("pt-BR") : "—"}
                 </span>
                 <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">{label}</span>
               </div>
