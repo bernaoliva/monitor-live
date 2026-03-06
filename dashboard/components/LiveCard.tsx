@@ -332,6 +332,9 @@ export default function LiveCard({
                   {formatViewers(live.concurrent_viewers)} esp.
                 </span>
               )}
+              <span className={`${ultraDense ? "text-[9px]" : denseHeader ? "text-[10px]" : "text-[12px]"} font-mono text-red-400/80`}>
+                {visibleComments.length} prob.
+              </span>
             </div>
           </div>
         </div>

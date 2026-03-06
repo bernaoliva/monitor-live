@@ -6,6 +6,7 @@ import Link from "next/link"
 import { doc, collection, onSnapshot, query, orderBy, where, limitToLast, updateDoc, increment } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
+import { computeHealthScore } from "@/lib/health-score"
 import CommentFeed from "@/components/CommentFeed"
 import CommentsChart from "@/components/CommentsChart"
 import ExportButton from "@/components/ExportButton"
@@ -214,6 +215,15 @@ export default function LivePage() {
 
   const catTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
 
+  const healthScore = useMemo(
+    () => computeHealthScore(
+      live?.concurrent_viewers ?? 0,
+      visibleTech.map((c) => ({ ts: c.ts, severity: c.severity, issue: c.issue })),
+      chartPoints,
+    ),
+    [live?.concurrent_viewers, visibleTech, chartPoints],
+  )
+
   if (notFound) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center space-y-4 fade-up">
@@ -286,17 +296,35 @@ export default function LivePage() {
             {techCount.toLocaleString()}
           </p>
         </div>
-        <div className={`stat-card ${techRate > 15 ? "stat-red" : techRate > 5 ? "stat-blue" : "stat-green"} p-3`}>
-          <p className="metric-label">Taxa</p>
-          <p className={`font-data text-xl font-bold mt-0.5 ${
-            techRate > 15 ? "text-red-400" : techRate > 5 ? "text-amber-400" : "text-emerald-400"
-          }`}>{techRate}%</p>
+        <div className="stat-card stat-muted p-3">
+          <p className="metric-label">Audiência</p>
+          <div className="flex items-end gap-3 mt-0.5">
+            <div className="flex flex-col items-center">
+              <span className="font-data text-xl font-bold text-white/75">
+                {live?.concurrent_viewers ? (live.concurrent_viewers >= 1_000_000 ? `${(live.concurrent_viewers / 1_000_000).toFixed(1)}M` : live.concurrent_viewers >= 1_000 ? `${(live.concurrent_viewers / 1_000).toFixed(0)}k` : String(live.concurrent_viewers)) : "—"}
+              </span>
+              <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">atual</span>
+            </div>
+            <div className="flex flex-col items-center">
+              <span className="font-data text-xl font-bold text-white/30">—</span>
+              <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">pico</span>
+            </div>
+            <div className="flex flex-col items-center">
+              <span className="font-data text-xl font-bold text-white/30">—</span>
+              <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">média</span>
+            </div>
+          </div>
         </div>
         <div className="stat-card stat-muted p-3">
-          <p className="metric-label">Categorias</p>
-          <p className="font-data text-xl font-bold text-white/60 mt-0.5">
-            {categoryBreakdown.length}
-          </p>
+          <p className="metric-label">Score</p>
+          <div className="flex items-baseline gap-1.5 mt-0.5">
+            <span className="font-data text-xl font-bold" style={{ color: healthScore.color }}>
+              {healthScore.score}
+            </span>
+            <span className="text-[10px] font-bold font-mono" style={{ color: healthScore.color, opacity: 0.75 }}>
+              {healthScore.level}
+            </span>
+          </div>
         </div>
       </div>
 
