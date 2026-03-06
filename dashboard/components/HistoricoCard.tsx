@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react"
 import Link from "next/link"
-import { collection, onSnapshot, query, where } from "firebase/firestore"
+import { collection, onSnapshot, query, where, getDocs } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
@@ -54,6 +54,20 @@ function formatDuration(startedAt: string, endedAt: string | null): string {
 
 export default function HistoricoCard({ live }: { live: Live }) {
   const [techComments, setTechComments] = useState<Comment[]>([])
+  const [peakViewers, setPeakViewers]   = useState<number | null>(null)
+  const [avgViewers,  setAvgViewers]    = useState<number | null>(null)
+
+  useEffect(() => {
+    getDocs(collection(db, "lives", live.video_id, "minutes")).then((snap) => {
+      const vals = snap.docs
+        .map((d) => d.data().viewers as number | undefined)
+        .filter((v): v is number => typeof v === "number" && v > 0)
+      if (vals.length) {
+        setPeakViewers(Math.max(...vals))
+        setAvgViewers(Math.round(vals.reduce((s, v) => s + v, 0) / vals.length))
+      }
+    })
+  }, [live.video_id])
 
   useEffect(() => {
     const q = query(
@@ -170,9 +184,20 @@ export default function HistoricoCard({ live }: { live: Live }) {
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
           <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Audiência</p>
-          <p className="font-data text-base font-black text-white/60">
-            {live.concurrent_viewers ? live.concurrent_viewers.toLocaleString("pt-BR") : "—"}
-          </p>
+          {peakViewers ? (
+            <div className="space-y-0.5">
+              <div className="flex items-baseline gap-1">
+                <span className="text-[7px] text-white/30 font-mono uppercase">pico</span>
+                <span className="font-data text-sm font-black text-white/70">{peakViewers.toLocaleString("pt-BR")}</span>
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-[7px] text-white/30 font-mono uppercase">média</span>
+                <span className="font-data text-[11px] font-bold text-white/45">{avgViewers?.toLocaleString("pt-BR")}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="font-data text-base font-black text-white/25">—</p>
+          )}
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
           <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Score</p>
