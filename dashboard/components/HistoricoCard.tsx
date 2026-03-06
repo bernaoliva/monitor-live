@@ -8,6 +8,7 @@ import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
 import { ArrowRight } from "lucide-react"
 import { format } from "date-fns"
+import { computeHealthScore } from "@/lib/health-score"
 
 function buildChartData(comments: Comment[]): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
@@ -85,6 +86,15 @@ export default function HistoricoCard({ live }: { live: Live }) {
     ((live.technical_comments || 0) / Math.max(live.total_comments, 1)) * 100
   )
 
+  const healthScore = useMemo(
+    () => computeHealthScore(
+      live.concurrent_viewers ?? 0,
+      techComments.map((c) => ({ ts: c.ts, severity: c.severity, issue: c.issue })),
+      chartData,
+    ),
+    [live.concurrent_viewers, techComments, chartData],
+  )
+
   // Conta diretamente dos comentários técnicos reais
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
@@ -159,17 +169,16 @@ export default function HistoricoCard({ live }: { live: Live }) {
           </p>
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
-          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Taxa</p>
-          <p className={`font-data text-base font-black ${
-            techRate > 15 ? "text-red-400" : techRate > 5 ? "text-amber-400" : "text-emerald-400"
-          }`}>
-            {techRate}%
+          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Audiência</p>
+          <p className="font-data text-base font-black text-white/60">
+            {live.concurrent_viewers ? live.concurrent_viewers.toLocaleString("pt-BR") : "—"}
           </p>
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
-          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Categorias</p>
-          <p className="font-data text-base font-black text-white/60">
-            {categoryBreakdown.length}
+          <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Score</p>
+          <p className="font-data text-base font-black" style={{ color: healthScore.color }}>
+            {healthScore.score}
+            <span className="text-[8px] font-mono ml-1 opacity-70">{healthScore.level}</span>
           </p>
         </div>
       </div>
