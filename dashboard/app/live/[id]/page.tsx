@@ -151,7 +151,7 @@ export default function LivePage() {
             .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))
             .map((d) => {
               const raw = d.data()
-              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0 } satisfies ChartPoint
+              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined } satisfies ChartPoint
             })
             .sort((a, b) => a.minute.localeCompare(b.minute))
         )
@@ -215,6 +215,10 @@ export default function LivePage() {
   }, [visibleTech])
 
   const catTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
+
+  const viewerPts   = chartPoints.filter((p) => p.viewers && p.viewers > 0)
+  const peakViewers = viewerPts.length ? Math.max(...viewerPts.map((p) => p.viewers!)) : null
+  const avgViewers  = viewerPts.length ? Math.round(viewerPts.reduce((s, p) => s + p.viewers!, 0) / viewerPts.length) : null
 
   const healthScore = useMemo(
     () => computeHealthScore(
@@ -300,20 +304,18 @@ export default function LivePage() {
         <div className="stat-card stat-muted p-3">
           <p className="metric-label">Audiência</p>
           <div className="flex items-end gap-3 mt-0.5">
-            <div className="flex flex-col items-center">
-              <span className="font-data text-xl font-bold text-white/75">
-                {live?.concurrent_viewers ? (live.concurrent_viewers >= 1_000_000 ? `${(live.concurrent_viewers / 1_000_000).toFixed(1)}M` : live.concurrent_viewers >= 1_000 ? `${(live.concurrent_viewers / 1_000).toFixed(0)}k` : String(live.concurrent_viewers)) : "—"}
-              </span>
-              <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">atual</span>
-            </div>
-            <div className="flex flex-col items-center">
-              <span className="font-data text-xl font-bold text-white/30">—</span>
-              <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">pico</span>
-            </div>
-            <div className="flex flex-col items-center">
-              <span className="font-data text-xl font-bold text-white/30">—</span>
-              <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">média</span>
-            </div>
+            {([
+              { label: "atual", val: live?.concurrent_viewers ?? null },
+              { label: "pico",  val: peakViewers },
+              { label: "média", val: avgViewers  },
+            ] as { label: string; val: number | null }[]).map(({ label, val }) => (
+              <div key={label} className="flex flex-col items-center">
+                <span className={`font-data text-xl font-bold ${val ? "text-white/75" : "text-white/25"}`}>
+                  {val ? (val >= 1_000_000 ? `${(val / 1_000_000).toFixed(1)}M` : val >= 1_000 ? `${(val / 1_000).toFixed(0)}k` : String(val)) : "—"}
+                </span>
+                <span className="text-[7px] font-mono text-white/30 uppercase tracking-wide">{label}</span>
+              </div>
+            ))}
           </div>
         </div>
         <div className="stat-card stat-muted p-3">

@@ -73,7 +73,7 @@ export function computeHealthScore(
 
   // Score final
   const realtime = Math.min(basePenalty + spikePenalty + velocityPenalty, 60)
-  const score    = Math.max(0, Math.round(100 - realtime - history))
+  const score    = Math.max(0, Math.floor(100 - realtime - history))
 
   const level = score >= 80 ? "OK" : score >= 50 ? "ATENÇÃO" : score >= 25 ? "ALERTA" : "CRÍTICO"
   const color = score >= 80 ? "#22c55e" : score >= 50 ? "#eab308" : score >= 25 ? "#f97316" : "#ef4444"

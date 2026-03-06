@@ -33,4 +33,5 @@ export interface ChartPoint {
   minute: string
   total: number
   technical: number
+  viewers?: number
 }
