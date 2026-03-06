@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
+import { computeHealthScore } from "@/lib/health-score"
 import CommentsChart from "@/components/CommentsChart"
 import { AlertTriangle, ArrowRight, X, Pin, Volume2, VolumeOff } from "lucide-react"
 import { format } from "date-fns"
@@ -229,6 +230,15 @@ export default function LiveCard({
       .sort((a, b) => a.minute.localeCompare(b.minute))
   }, [chartData, visibleComments])
 
+  const healthScore = useMemo(
+    () => computeHealthScore(
+      live.concurrent_viewers ?? 0,
+      visibleComments.map((c) => ({ ts: c.ts, severity: c.severity, issue: c.issue })),
+      chartDataDisplay,
+    ),
+    [live.concurrent_viewers, visibleComments, chartDataDisplay],
+  )
+
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
     visibleComments.forEach((c) => {
@@ -322,9 +332,6 @@ export default function LiveCard({
                   {formatViewers(live.concurrent_viewers)} esp.
                 </span>
               )}
-              <span className={`${ultraDense ? "text-[9px]" : denseHeader ? "text-[10px]" : "text-[12px]"} font-mono text-red-400/80`}>
-                {visibleComments.length} prob.
-              </span>
             </div>
           </div>
         </div>
@@ -371,8 +378,75 @@ export default function LiveCard({
         )}
         <div className="relative z-[1]">
           <CommentsChart data={chartDataDisplay} height={chartHeight} showLegend={false} />
+          <div className="absolute top-0 left-0 z-10 pointer-events-none flex items-center leading-none" style={{ gap: 2 }}>
+            <div className="flex flex-col items-center" style={{ gap: 2 }}>
+              {chartHeight >= 90 ? (
+                <>
+                  <span style={{ color: healthScore.color, fontSize: 8, fontWeight: 700, opacity: 0.6, fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.1em", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                    score
+                  </span>
+                  <span style={{ color: healthScore.color, fontSize: 22, fontWeight: 700, fontFamily: "JetBrains Mono, monospace", lineHeight: 1, textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
+                    {healthScore.score}
+                  </span>
+                  <span style={{ color: healthScore.color, fontSize: 8, fontWeight: 700, opacity: 0.65, fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.12em", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                    {healthScore.level}
+                  </span>
+                </>
+              ) : (
+                <span style={{ color: healthScore.color, fontSize: 12, fontWeight: 700, fontFamily: "JetBrains Mono, monospace", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                  {healthScore.score}
+                </span>
+              )}
+            </div>
+            {chartHeight >= 90 && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/img/score/score-${healthScore.level === "OK" ? "ok" : healthScore.level === "ATENÇÃO" ? "atencao" : healthScore.level === "ALERTA" ? "alerta" : "critico"}.png`}
+                alt={healthScore.level}
+                width={32}
+                height={32}
+                style={{ objectFit: "contain", filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.8))" }}
+              />
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Stats: Audiência + Score */}
+      {!ultraDense && (
+        <div className={`px-3 flex items-start gap-5 border-t border-white/[0.04] ${compactCats ? "py-1" : "py-1.5"}`}>
+          <div>
+            <p className={`font-bold font-mono uppercase tracking-widest text-white/30 ${compactCats ? "text-[6px]" : "text-[7px]"}`}>Audiência</p>
+            <div className={`flex items-end gap-2.5 mt-0.5`}>
+              <div className="flex flex-col items-center">
+                <span className={`font-bold font-mono text-white/75 ${compactCats ? "text-[10px]" : "text-[12px]"}`}>
+                  {formatViewers(live.concurrent_viewers) ?? "—"}
+                </span>
+                <span className="text-[6px] font-mono text-white/30 uppercase tracking-wide">atual</span>
+              </div>
+              <div className="flex flex-col items-center">
+                <span className={`font-bold font-mono text-white/30 ${compactCats ? "text-[10px]" : "text-[12px]"}`}>—</span>
+                <span className="text-[6px] font-mono text-white/30 uppercase tracking-wide">pico</span>
+              </div>
+              <div className="flex flex-col items-center">
+                <span className={`font-bold font-mono text-white/30 ${compactCats ? "text-[10px]" : "text-[12px]"}`}>—</span>
+                <span className="text-[6px] font-mono text-white/30 uppercase tracking-wide">média</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <p className={`font-bold font-mono uppercase tracking-widest text-white/30 ${compactCats ? "text-[6px]" : "text-[7px]"}`}>Score</p>
+            <div className="flex items-end gap-1 mt-0.5">
+              <span className={`font-bold font-mono ${compactCats ? "text-[10px]" : "text-[12px]"}`} style={{ color: healthScore.color }}>
+                {healthScore.score}
+              </span>
+              <span className={`font-bold font-mono ${compactCats ? "text-[8px]" : "text-[9px]"}`} style={{ color: healthScore.color, opacity: 0.75 }}>
+                {healthScore.level}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pills de categoria — só para 4-6 lives */}
       {showCats && compactCats && (

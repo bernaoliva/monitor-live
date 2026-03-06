@@ -38,6 +38,22 @@ const MOCK_LIVES: MockLive[] = [
   { video_id: "ma", title: "ge.tv AO VIVO — Copa do Mundo: Brasil x Argentina",      channel: "GETV",   total_comments: 312000, tech_count: 44, viewers: 890000 },
 ]
 
+// ── Mock health scores ─────────────────────────────────────────────────────────
+
+type MockScore = { score: number; level: string; color: string }
+const MOCK_SCORES: Record<string, MockScore> = {
+  m1: { score: 93, level: "OK",      color: "#22c55e" },
+  m2: { score: 97, level: "OK",      color: "#22c55e" },
+  m3: { score: 65, level: "ATENÇÃO", color: "#eab308" },
+  m4: { score: 88, level: "OK",      color: "#22c55e" },
+  m5: { score: 58, level: "ATENÇÃO", color: "#eab308" },
+  m6: { score: 99, level: "OK",      color: "#22c55e" },
+  m7: { score: 34, level: "ALERTA",  color: "#f97316" },
+  m8: { score: 100, level: "OK",     color: "#22c55e" },
+  m9: { score: 18, level: "CRÍTICO", color: "#ef4444" },
+  ma: { score: 45, level: "ALERTA",  color: "#f97316" },
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const SEV_DOT: Record<string, string> = { high: "bg-red-400", medium: "bg-amber-400", low: "bg-yellow-300" }
@@ -155,6 +171,7 @@ function MockCard({
   onDragOver,
   onDrop,
   onDragEnd,
+  score,
 }: {
   live: MockLive
   liveCount: number
@@ -167,6 +184,7 @@ function MockCard({
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
+  score: MockScore
 }) {
   const [muted, setMuted] = useState(live.channel.toUpperCase() !== "CAZETV")
   const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : 125
@@ -258,6 +276,37 @@ function MockCard({
         )}
         <div className="relative z-[1]">
           <MockChart height={chartHeight} />
+          <div className="absolute top-0 left-0 z-10 pointer-events-none flex items-center leading-none" style={{ gap: 2 }}>
+            <div className="flex flex-col items-center" style={{ gap: 2 }}>
+              {chartHeight >= 90 ? (
+                <>
+                  <span style={{ color: score.color, fontSize: 8, fontWeight: 700, opacity: 0.6, fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.1em", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                    score
+                  </span>
+                  <span style={{ color: score.color, fontSize: 22, fontWeight: 700, fontFamily: "JetBrains Mono, monospace", lineHeight: 1, textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
+                    {score.score}
+                  </span>
+                  <span style={{ color: score.color, fontSize: 8, fontWeight: 700, opacity: 0.65, fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.12em", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                    {score.level}
+                  </span>
+                </>
+              ) : (
+                <span style={{ color: score.color, fontSize: 12, fontWeight: 700, fontFamily: "JetBrains Mono, monospace", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                  {score.score}
+                </span>
+              )}
+            </div>
+            {chartHeight >= 90 && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/img/score/score-${score.level === "OK" ? "ok" : score.level === "ATENÇÃO" ? "atencao" : score.level === "ALERTA" ? "alerta" : "critico"}.png`}
+                alt={score.level}
+                width={32}
+                height={32}
+                style={{ objectFit: "contain", filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.8))" }}
+              />
+            )}
+          </div>
         </div>
       </div>
 
@@ -425,6 +474,7 @@ export default function DevPreviewPage() {
       onDragOver={(e) => { e.preventDefault(); setDragOverId(live.video_id) }}
       onDrop={(e) => { e.preventDefault(); if (draggingId && draggingId !== live.video_id) handleDrop(draggingId, live.video_id) }}
       onDragEnd={() => { setDraggingId(null); setDragOverId(null) }}
+      score={MOCK_SCORES[live.video_id] ?? { score: 100, level: "OK", color: "#22c55e" }}
     />
   )
 
