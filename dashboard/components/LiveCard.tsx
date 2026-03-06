@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, useCallback } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import {
@@ -10,6 +10,7 @@ import {
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import { computeHealthScore } from "@/lib/health-score"
+import { youtubeTimestampUrl } from "@/lib/timestamp-url"
 import CommentsChart from "@/components/CommentsChart"
 import { AlertTriangle, ArrowRight, X, Pin, Volume2, VolumeOff } from "lucide-react"
 import { format } from "date-fns"
@@ -239,6 +240,12 @@ export default function LiveCard({
     [live.concurrent_viewers, visibleComments, chartDataDisplay],
   )
 
+  const handleMinuteClick = useCallback((minuteKey: string) => {
+    if (!live.url || !live.started_at) return
+    const url = youtubeTimestampUrl(live.url, live.started_at, minuteKey)
+    if (url) window.open(url, "_blank", "noopener,noreferrer")
+  }, [live.url, live.started_at])
+
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
     visibleComments.forEach((c) => {
@@ -385,7 +392,7 @@ export default function LiveCard({
           </div>
         )}
         <div className="relative z-[1]">
-          <CommentsChart data={chartDataDisplay} height={chartHeight} showLegend={false} />
+          <CommentsChart data={chartDataDisplay} height={chartHeight} showLegend={false} onMinuteClick={handleMinuteClick} />
           <div className="absolute top-0 left-0 z-10 pointer-events-none flex items-center leading-none" style={{ gap: 2 }}>
             <div className="flex flex-col items-center" style={{ gap: 2 }}>
               {chartHeight >= 90 ? (

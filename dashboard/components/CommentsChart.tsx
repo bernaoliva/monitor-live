@@ -36,13 +36,24 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   )
 }
 
-function TechDot(props: Record<string, unknown>) {
-  const { cx, cy, payload } = props as { cx: number; cy: number; payload: ChartPoint }
-  if (!payload || payload.technical === 0) return null
-  return <circle cx={cx} cy={cy} r={3.5} fill="#ef4444" fillOpacity={0.85} stroke="#fff" strokeWidth={1} strokeOpacity={0.3} />
+function makeTechDot(onMinuteClick?: (minute: string) => void) {
+  // eslint-disable-next-line react/display-name
+  return (props: Record<string, unknown>) => {
+    const { cx, cy, payload } = props as { cx: number; cy: number; payload: ChartPoint }
+    if (!payload || payload.technical === 0) return <g />
+    return (
+      <circle
+        cx={cx} cy={cy} r={onMinuteClick ? 5 : 3.5}
+        fill="#ef4444" fillOpacity={0.85}
+        stroke="#fff" strokeWidth={1} strokeOpacity={0.3}
+        style={onMinuteClick ? { cursor: "pointer" } : undefined}
+        onClick={onMinuteClick ? (e) => { e.stopPropagation(); onMinuteClick(payload.minute) } : undefined}
+      />
+    )
+  }
 }
 
-export default function CommentsChart({ data, height = 220, showLegend = true }: { data: ChartPoint[]; height?: number; showLegend?: boolean }) {
+export default function CommentsChart({ data, height = 220, showLegend = true, onMinuteClick }: { data: ChartPoint[]; height?: number; showLegend?: boolean; onMinuteClick?: (minute: string) => void }) {
   // IDs únicos por instância do chart para evitar conflitos SVG entre cards
   const uid = useId()
   const gradTotalId = `gradTotal-${uid}`
@@ -111,7 +122,7 @@ export default function CommentsChart({ data, height = 220, showLegend = true }:
           stroke="#ef4444"
           strokeWidth={2}
           fill={`url(#${gradTechId})`}
-          dot={<TechDot />}
+          dot={makeTechDot(onMinuteClick)}
           isAnimationActive={false}
         />
       </AreaChart>
