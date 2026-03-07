@@ -5,40 +5,53 @@ import { collection, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live } from "@/lib/types"
 import HistoricoCard from "@/components/HistoricoCard"
-import { History, X } from "lucide-react"
+import { History } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { parseCompetition } from "@/lib/title-parser"
-import {
-  BarChart, Bar, XAxis, YAxis, Cell, Tooltip,
-  ResponsiveContainer,
-} from "recharts"
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts"
 
-interface CompStat {
-  name: string
-  lives: number
-  problems: number
+// ── Categoria de problema ──────────────────────────────────────────────────
+function normCat(raw: string): string {
+  const u = raw.toUpperCase().trim()
+  if (/AUDIO|ÁUDIO|SOM\b|NARR/.test(u))              return "AUDIO"
+  if (/VIDEO|VÍDEO|TELA|PIXEL|IMAG|CONGEL/.test(u))  return "VIDEO"
+  if (/REDE|PLATAFORMA|BUFFER|CAIU|PLAT/.test(u))    return "REDE"
+  if (/\bGC\b|PLACAR/.test(u))                       return "GC"
+  return "OUTROS"
 }
 
-interface ChartTooltipProps {
+const CAT_COLOR: Record<string, string> = {
+  AUDIO:  "#60a5fa",
+  VIDEO:  "#c084fc",
+  REDE:   "#fb923c",
+  GC:     "#22d3ee",
+  OUTROS: "rgba(255,255,255,0.18)",
+}
+
+// ── Tooltip do pie ─────────────────────────────────────────────────────────
+interface PieTooltipProps {
   active?: boolean
-  payload?: { payload: CompStat }[]
+  payload?: { name: string; value: number }[]
 }
-
-const ChartTooltip = ({ active, payload }: ChartTooltipProps) => {
+const PieTooltip = ({ active, payload }: PieTooltipProps) => {
   if (!active || !payload?.length) return null
-  const d = payload[0].payload
+  const d = payload[0]
   return (
     <div className="bg-[#1a1a24] border border-white/10 rounded-lg px-3 py-2 text-xs shadow-xl">
-      <p className="font-bold text-white mb-1">{d.name}</p>
-      <p className="text-white/50">{d.lives} live{d.lives > 1 ? "s" : ""} · {d.problems} problemas</p>
+      <span className="font-bold text-white">{d.name}</span>
+      <span className="text-white/50 ml-2">{d.value.toLocaleString("pt-BR")} ocorrências</span>
     </div>
   )
 }
 
+// ── Tipos ──────────────────────────────────────────────────────────────────
+type ChannelFilter = "all" | "cazetv" | "getv"
+
+// ── Página ─────────────────────────────────────────────────────────────────
 export default function HistoricoPage() {
   const [lives, setLives] = useState<Live[]>([])
-  const [selectedCompetitions, setSelectedCompetitions] = useState<Set<string>>(new Set())
+  const [channel, setChannel] = useState<ChannelFilter>("all")
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "lives"), (snap) => {
@@ -71,31 +84,33 @@ export default function HistoricoPage() {
     return () => unsub()
   }, [])
 
-  const compStats = useMemo((): CompStat[] => {
-    const acc: Record<string, CompStat> = {}
-    lives.forEach((live) => {
-      const comp = parseCompetition(live.title)
-      if (!acc[comp]) acc[comp] = { name: comp, lives: 0, problems: 0 }
-      acc[comp].lives++
-      acc[comp].problems += live.technical_comments
+  // Só lives com competição identificada, filtradas por canal
+  const filtered = useMemo(() => {
+    return lives.filter((l) => {
+      if (channel !== "all" && l.channel.toLowerCase() !== channel) return false
+      return parseCompetition(l.title) !== "OUTROS"
     })
-    return Object.values(acc)
-      .filter((c) => c.lives >= 2)
-      .sort((a, b) => {
-        if (a.name === "OUTROS") return 1
-        if (b.name === "OUTROS") return -1
-        return b.problems - a.problems
+  }, [lives, channel])
+
+  // Dados do gráfico de pizza — agrega issue_counts de todas as lives filtradas
+  const pieData = useMemo(() => {
+    const acc: Record<string, number> = {}
+    filtered.forEach((live) => {
+      Object.entries(live.issue_counts || {}).forEach(([k, v]) => {
+        const cat = normCat(k)
+        acc[cat] = (acc[cat] || 0) + (v as number)
       })
-  }, [lives])
+    })
+    return Object.entries(acc)
+      .filter(([, v]) => v > 0)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+  }, [filtered])
 
-  const filteredLives = useMemo(() => {
-    if (selectedCompetitions.size === 0) return lives
-    return lives.filter((l) => selectedCompetitions.has(parseCompetition(l.title)))
-  }, [lives, selectedCompetitions])
-
+  // Agrupamento por data
   const dateGroups = useMemo(() => {
     const acc: Record<string, Live[]> = {}
-    filteredLives.forEach((live) => {
+    filtered.forEach((live) => {
       const dateStr = (live.ended_at ?? live.started_at ?? "").slice(0, 10)
       if (!acc[dateStr]) acc[dateStr] = []
       acc[dateStr].push(live)
@@ -103,22 +118,14 @@ export default function HistoricoPage() {
     return Object.entries(acc)
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([date, groupLives]) => ({ date, groupLives }))
-  }, [filteredLives])
+  }, [filtered])
 
-  const summaryStats = useMemo(() => ({
-    count:    filteredLives.length,
-    msgs:     filteredLives.reduce((s, l) => s + l.total_comments, 0),
-    problems: filteredLives.reduce((s, l) => s + l.technical_comments, 0),
-  }), [filteredLives])
-
-  function toggleCompetition(name: string) {
-    setSelectedCompetitions((prev) => {
-      const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
-      return next
-    })
-  }
+  // Stats
+  const stats = useMemo(() => ({
+    count:    filtered.length,
+    msgs:     filtered.reduce((s, l) => s + l.total_comments, 0),
+    problems: filtered.reduce((s, l) => s + l.technical_comments, 0),
+  }), [filtered])
 
   function formatDateGroup(dateStr: string): string {
     if (!dateStr) return "—"
@@ -129,113 +136,107 @@ export default function HistoricoPage() {
     }
   }
 
-  const chartHeight = Math.max(compStats.length * 26 + 16, 60)
-
   return (
     <div className="space-y-5">
-      {/* Header */}
+      {/* Header + canal filter */}
       <div className="fade-up flex items-center justify-between">
         <div className="flex items-center gap-3">
           <History size={16} className="text-white/20" />
           <div>
             <h1 className="text-sm font-bold text-white">Historico</h1>
             <p className="text-[11px] text-white/20 font-mono">
-              {lives.length > 0
-                ? `${lives.length} transmiss${lives.length > 1 ? "oes" : "ao"} encerrada${lives.length > 1 ? "s" : ""}`
-                : "Nenhuma transmissao encerrada"}
+              {filtered.length > 0
+                ? `${filtered.length} de ${lives.filter(l => parseCompetition(l.title) !== "OUTROS").length} transmiss${filtered.length > 1 ? "oes" : "ao"} com competicao`
+                : "Nenhuma transmissao"}
             </p>
           </div>
         </div>
-        {selectedCompetitions.size > 0 && (
-          <button
-            onClick={() => setSelectedCompetitions(new Set())}
-            className="flex items-center gap-1.5 text-[10px] font-mono text-white/30 hover:text-white/60 transition-colors"
-          >
-            <X size={10} />
-            LIMPAR FILTRO
-          </button>
-        )}
+
+        <select
+          value={channel}
+          onChange={(e) => setChannel(e.target.value as ChannelFilter)}
+          className="bg-[#12121a] border border-white/[0.08] text-white/50 text-[10px] font-mono rounded-md px-2.5 py-1.5 outline-none focus:border-white/20 cursor-pointer"
+        >
+          <option value="all">Todos os canais</option>
+          <option value="cazetv">CazéTV</option>
+          <option value="getv">GETV</option>
+        </select>
       </div>
 
-      {lives.length > 0 && (
+      {filtered.length > 0 && (
         <>
-          {/* Interactive competition chart */}
-          {compStats.length > 0 && (
-            <div className="fade-d1 panel overflow-hidden px-2 pt-3 pb-2">
-              <p className="text-[8px] font-bold uppercase tracking-wider text-white/30 mb-2 px-2">
-                {selectedCompetitions.size > 0
-                  ? `${selectedCompetitions.size} selecionada${selectedCompetitions.size > 1 ? "s" : ""} — clique para alternar`
-                  : "Clique para filtrar por competição"}
-              </p>
-              <ResponsiveContainer width="100%" height={chartHeight}>
-                <BarChart
-                  data={compStats}
-                  layout="vertical"
-                  margin={{ top: 0, right: 44, left: 0, bottom: 0 }}
-                  barCategoryGap={3}
-                >
-                  <XAxis type="number" hide />
-                  <YAxis
-                    dataKey="name"
-                    type="category"
-                    width={168}
-                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10, fontFamily: "JetBrains Mono" }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(v: string) => v.length > 22 ? v.slice(0, 20) + "…" : v}
-                  />
-                  <Tooltip
-                    content={<ChartTooltip />}
-                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
-                  />
-                  <Bar
-                    dataKey="problems"
-                    radius={[0, 3, 3, 0]}
-                    style={{ cursor: "pointer" }}
-                    onClick={(data: CompStat) => toggleCompetition(data.name)}
-                    label={{
-                      position: "right",
-                      fill: "rgba(255,255,255,0.25)",
-                      fontSize: 10,
-                      fontFamily: "JetBrains Mono",
-                      formatter: (v: number) => v > 0 ? v : "",
-                    }}
-                  >
-                    {compStats.map((entry) => (
-                      <Cell
-                        key={entry.name}
-                        fill={
-                          selectedCompetitions.has(entry.name)
-                            ? "#ef4444"
-                            : "rgba(255,255,255,0.09)"
-                        }
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Summary stats */}
-          <div className="fade-d2 grid grid-cols-3 panel overflow-hidden">
+          {/* Stats strip */}
+          <div className="fade-d1 grid grid-cols-3 panel overflow-hidden">
             <div className="px-4 py-3">
               <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Lives</p>
-              <p className="font-data text-base font-black text-white">{summaryStats.count}</p>
+              <p className="font-data text-base font-black text-white">{stats.count}</p>
             </div>
             <div className="px-4 py-3 border-l border-white/[0.06]">
               <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Msgs</p>
               <p className="font-data text-base font-black text-white">
-                {summaryStats.msgs.toLocaleString("pt-BR")}
+                {stats.msgs.toLocaleString("pt-BR")}
               </p>
             </div>
             <div className="px-4 py-3 border-l border-white/[0.06]">
               <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">Problemas</p>
-              <p className={`font-data text-base font-black ${summaryStats.problems > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                {summaryStats.problems.toLocaleString("pt-BR")}
+              <p className={`font-data text-base font-black ${stats.problems > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                {stats.problems.toLocaleString("pt-BR")}
               </p>
             </div>
           </div>
+
+          {/* Pie chart — categorias de problemas */}
+          {pieData.length > 0 && (
+            <div className="fade-d2 panel p-4">
+              <p className="text-[8px] font-bold uppercase tracking-wider text-white/30 mb-3">
+                Categorias de problemas
+              </p>
+              <div className="flex items-center gap-6">
+                <div className="shrink-0" style={{ width: 120, height: 120 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        dataKey="value"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={30}
+                        outerRadius={52}
+                        paddingAngle={2}
+                        isAnimationActive={false}
+                      >
+                        {pieData.map((entry) => (
+                          <Cell
+                            key={entry.name}
+                            fill={CAT_COLOR[entry.name] ?? CAT_COLOR.OUTROS}
+                          />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<PieTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="flex-1 space-y-2">
+                  {pieData.map(({ name, value }) => {
+                    const total = pieData.reduce((s, d) => s + d.value, 0)
+                    const pct   = Math.round((value / total) * 100)
+                    const color = CAT_COLOR[name] ?? CAT_COLOR.OUTROS
+                    return (
+                      <div key={name} className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+                        <span className="text-[10px] font-mono text-white/40 flex-1 uppercase">{name}</span>
+                        <span className="text-[10px] font-mono text-white/25">{pct}%</span>
+                        <span className="text-[11px] font-data font-bold w-12 text-right" style={{ color }}>
+                          {value.toLocaleString("pt-BR")}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Date groups */}
           <div className="fade-d3 space-y-6">
@@ -257,6 +258,15 @@ export default function HistoricoPage() {
             ))}
           </div>
         </>
+      )}
+
+      {filtered.length === 0 && lives.length > 0 && (
+        <div className="fade-d1 panel flex flex-col items-center justify-center py-12 text-center">
+          <p className="text-white/25 text-xs font-medium">Nenhuma transmissão com competição identificada</p>
+          <p className="text-white/15 text-[11px] mt-1 font-mono">
+            {channel !== "all" ? "Tente outro canal" : "Aguarde novas lives"}
+          </p>
+        </div>
       )}
 
       {lives.length === 0 && (
