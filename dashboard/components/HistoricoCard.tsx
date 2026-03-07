@@ -9,6 +9,7 @@ import CommentsChart from "@/components/CommentsChart"
 import { ArrowRight } from "lucide-react"
 import { format } from "date-fns"
 import { computeHealthScore } from "@/lib/health-score"
+import { parseCompetition } from "@/lib/title-parser"
 
 function buildChartData(comments: Comment[]): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
@@ -129,8 +130,14 @@ export default function HistoricoCard({ live }: { live: Live }) {
     ? format(new Date(live.started_at), "dd/MM HH:mm")
     : "—"
 
+  const competition = parseCompetition(live.title)
+
+  const accentClass =
+    healthScore.score >= 80 ? "accent-bar-green" :
+    healthScore.score >= 50 ? "accent-bar-amber" : "accent-bar-red"
+
   return (
-    <div className="panel overflow-hidden">
+    <div className={`panel overflow-hidden ${accentClass}`}>
       {/* Header */}
       <div className="flex items-start justify-between px-4 pt-4 pb-3">
         <div className="min-w-0 flex-1 space-y-1">
@@ -138,6 +145,11 @@ export default function HistoricoCard({ live }: { live: Live }) {
             <span className="tag bg-white/[0.04] text-white/35 border border-white/[0.06]">
               ENCERRADA
             </span>
+            {competition !== "OUTROS" && (
+              <span className="tag bg-white/[0.06] text-white/45 border border-white/[0.08]">
+                {competition}
+              </span>
+            )}
             <span className="text-[10px] text-white/25 font-mono">{startDate}</span>
             <span className="text-[10px] text-white/20 font-mono">
               {formatDuration(live.started_at, live.ended_at)}
