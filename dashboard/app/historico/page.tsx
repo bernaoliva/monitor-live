@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
-import { collection, onSnapshot } from "firebase/firestore"
+import { useEffect, useState, useMemo, useRef } from "react"
+import { collection, onSnapshot, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live } from "@/lib/types"
 import HistoricoCard from "@/components/HistoricoCard"
@@ -11,14 +11,15 @@ import { ptBR } from "date-fns/locale"
 import { parseCompetition } from "@/lib/title-parser"
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts"
 
-// ── Normalização de categorias ─────────────────────────────────────────────
-function normCat(raw: string): string {
+// ── Normalização de categorias (igual ao HistoricoCard) ───────────────────
+function normCat(raw: string | null | undefined): string | null {
+  if (!raw) return null
   const u = raw.toUpperCase().trim()
   if (/AUDIO|ÁUDIO|SOM\b|NARR/.test(u))              return "AUDIO"
   if (/VIDEO|VÍDEO|TELA|PIXEL|IMAG|CONGEL/.test(u))  return "VIDEO"
   if (/REDE|PLATAFORMA|BUFFER|CAIU|PLAT/.test(u))    return "REDE"
   if (/\bGC\b|PLACAR/.test(u))                       return "GC"
-  return "OUTROS"
+  return null
 }
 
 const CAT_COLOR: Record<string, string> = {
@@ -58,6 +59,10 @@ export default function HistoricoPage() {
   const [lives,                 setLives]                = useState<Live[]>([])
   const [channel,               setChannel]              = useState<ChannelFilter>("all")
   const [selectedCompetitions,  setSelectedCompetitions] = useState<Set<string>>(new Set())
+
+  // Cache de categorias por video_id (busca na subcoleção comments, igual HistoricoCard)
+  const catCacheRef = useRef<Record<string, Record<string, number>>>({})
+  const [catCache,  setCatCache]  = useState<Record<string, Record<string, number>>>({})
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "lives"), (snap) => {
@@ -119,21 +124,40 @@ export default function HistoricoPage() {
     return channelFiltered.filter((l) => selectedCompetitions.has(parseCompetition(l.title)))
   }, [channelFiltered, selectedCompetitions])
 
-  // 4. Dados do pie — só as 4 categorias reais (AUDIO, VIDEO, REDE, GC)
+  // 4. Busca categorias reais da subcoleção comments (com cache por video_id)
+  useEffect(() => {
+    const missing = fullyFiltered.filter((l) => !catCacheRef.current[l.video_id])
+    if (missing.length === 0) return
+
+    Promise.all(
+      missing.map(async (live) => {
+        const snap = await getDocs(
+          query(collection(db, "lives", live.video_id, "comments"), where("is_technical", "==", true))
+        )
+        const cats: Record<string, number> = {}
+        snap.docs.forEach((d) => {
+          const cat = normCat(d.data().category as string | null)
+          if (cat) cats[cat] = (cats[cat] || 0) + 1
+        })
+        catCacheRef.current[live.video_id] = cats
+      })
+    ).then(() => setCatCache({ ...catCacheRef.current }))
+  }, [fullyFiltered])
+
+  // 5. Agrega categorias do cache para o pie
   const pieData = useMemo(() => {
     const acc: Record<string, number> = {}
     fullyFiltered.forEach((live) => {
-      Object.entries(live.issue_counts || {}).forEach(([k, v]) => {
-        const cat = normCat(k)
-        if (cat === "OUTROS") return   // descarta o que não tem categoria definida
-        acc[cat] = (acc[cat] || 0) + (v as number)
+      const cats = catCache[live.video_id] ?? {}
+      Object.entries(cats).forEach(([cat, n]) => {
+        acc[cat] = (acc[cat] || 0) + n
       })
     })
     return Object.entries(acc)
       .filter(([, v]) => v > 0)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-  }, [fullyFiltered])
+  }, [fullyFiltered, catCache])
 
   // 5. Agrupamento por data
   const dateGroups = useMemo(() => {
