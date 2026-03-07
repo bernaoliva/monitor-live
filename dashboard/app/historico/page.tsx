@@ -124,8 +124,10 @@ export default function HistoricoPage() {
     return channelFiltered.filter((l) => selectedCompetitions.has(parseCompetition(l.title)))
   }, [channelFiltered, selectedCompetitions])
 
-  // 4. Busca categorias reais da subcoleção comments (com cache por video_id)
+  // 4. Busca categorias da subcoleção comments — só quando ≤50 lives filtradas
+  //    (evita N>50 queries simultâneas quando nenhum filtro está ativo)
   useEffect(() => {
+    if (fullyFiltered.length > 50) return
     const missing = fullyFiltered.filter((l) => !catCacheRef.current[l.video_id])
     if (missing.length === 0) return
 
@@ -204,7 +206,8 @@ export default function HistoricoPage() {
         <div>
           <h1 className="text-sm font-bold text-white">Historico</h1>
           <p className="text-[11px] text-white/20 font-mono">
-            {stats.count} de {channelFiltered.length} transmiss{channelFiltered.length > 1 ? "oes" : "ao"} encerrada{channelFiltered.length > 1 ? "s" : ""}
+            {lives.length} transmiss{lives.length > 1 ? "oes" : "ao"} encerrada{lives.length > 1 ? "s" : ""}
+              {fullyFiltered.length < lives.length && ` · mostrando ${fullyFiltered.length}`}
           </p>
         </div>
       </div>
@@ -280,7 +283,13 @@ export default function HistoricoPage() {
               Categorias de problemas
             </p>
 
-            {pieData.length > 0 ? (
+            {fullyFiltered.length > 50 ? (
+              <div className="flex-1 flex items-center justify-center text-center px-4">
+                <p className="text-white/20 text-[11px] font-mono leading-relaxed">
+                  Selecione uma competição<br />para ver o breakdown de categorias
+                </p>
+              </div>
+            ) : pieData.length > 0 ? (
               <>
                 {/* Donut */}
                 <div style={{ height: 150 }}>
