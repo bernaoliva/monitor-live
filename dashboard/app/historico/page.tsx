@@ -22,11 +22,10 @@ function normCat(raw: string): string {
 }
 
 const CAT_COLOR: Record<string, string> = {
-  AUDIO:  "#60a5fa",
-  VIDEO:  "#c084fc",
-  REDE:   "#fb923c",
-  GC:     "#22d3ee",
-  OUTROS: "rgba(255,255,255,0.20)",
+  AUDIO: "#60a5fa",
+  VIDEO: "#c084fc",
+  REDE:  "#fb923c",
+  GC:    "#22d3ee",
 }
 
 // ── Tooltip do pie ─────────────────────────────────────────────────────────
@@ -120,32 +119,20 @@ export default function HistoricoPage() {
     return channelFiltered.filter((l) => selectedCompetitions.has(parseCompetition(l.title)))
   }, [channelFiltered, selectedCompetitions])
 
-  // 4. Dados do pie — issue_counts (categorizado) + restante vai para OUTROS
-  //    Garante que o total do pie == soma de technical_comments (todos os problemas)
+  // 4. Dados do pie — só as 4 categorias reais (AUDIO, VIDEO, REDE, GC)
   const pieData = useMemo(() => {
     const acc: Record<string, number> = {}
     fullyFiltered.forEach((live) => {
-      let categorizedTotal = 0
       Object.entries(live.issue_counts || {}).forEach(([k, v]) => {
-        const n = v as number
         const cat = normCat(k)
-        acc[cat] = (acc[cat] || 0) + n
-        categorizedTotal += n
+        if (cat === "OUTROS") return   // descarta o que não tem categoria definida
+        acc[cat] = (acc[cat] || 0) + (v as number)
       })
-      // Comentários técnicos sem categoria explícita → OUTROS
-      const uncategorized = (live.technical_comments || 0) - categorizedTotal
-      if (uncategorized > 0) {
-        acc["OUTROS"] = (acc["OUTROS"] || 0) + uncategorized
-      }
     })
     return Object.entries(acc)
       .filter(([, v]) => v > 0)
       .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => {
-        if (a.name === "OUTROS") return 1
-        if (b.name === "OUTROS") return -1
-        return b.value - a.value
-      })
+      .sort((a, b) => b.value - a.value)
   }, [fullyFiltered])
 
   // 5. Agrupamento por data
@@ -289,7 +276,7 @@ export default function HistoricoPage() {
                         {pieData.map((entry) => (
                           <Cell
                             key={entry.name}
-                            fill={CAT_COLOR[entry.name] ?? CAT_COLOR.OUTROS}
+                            fill={CAT_COLOR[entry.name] ?? "#ffffff22"}
                           />
                         ))}
                       </Pie>
@@ -302,7 +289,7 @@ export default function HistoricoPage() {
                 <div className="space-y-1.5">
                   {pieData.map(({ name, value }) => {
                     const pct   = pieTotal > 0 ? Math.round((value / pieTotal) * 100) : 0
-                    const color = CAT_COLOR[name] ?? CAT_COLOR.OUTROS
+                    const color = CAT_COLOR[name] ?? "#ffffff22"
                     return (
                       <div key={name} className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
