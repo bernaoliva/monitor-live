@@ -120,19 +120,32 @@ export default function HistoricoPage() {
     return channelFiltered.filter((l) => selectedCompetitions.has(parseCompetition(l.title)))
   }, [channelFiltered, selectedCompetitions])
 
-  // 4. Dados do pie — agrega issue_counts das lives filtradas
+  // 4. Dados do pie — issue_counts (categorizado) + restante vai para OUTROS
+  //    Garante que o total do pie == soma de technical_comments (todos os problemas)
   const pieData = useMemo(() => {
     const acc: Record<string, number> = {}
     fullyFiltered.forEach((live) => {
+      let categorizedTotal = 0
       Object.entries(live.issue_counts || {}).forEach(([k, v]) => {
+        const n = v as number
         const cat = normCat(k)
-        acc[cat] = (acc[cat] || 0) + (v as number)
+        acc[cat] = (acc[cat] || 0) + n
+        categorizedTotal += n
       })
+      // Comentários técnicos sem categoria explícita → OUTROS
+      const uncategorized = (live.technical_comments || 0) - categorizedTotal
+      if (uncategorized > 0) {
+        acc["OUTROS"] = (acc["OUTROS"] || 0) + uncategorized
+      }
     })
     return Object.entries(acc)
       .filter(([, v]) => v > 0)
       .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
+      .sort((a, b) => {
+        if (a.name === "OUTROS") return 1
+        if (b.name === "OUTROS") return -1
+        return b.value - a.value
+      })
   }, [fullyFiltered])
 
   // 5. Agrupamento por data

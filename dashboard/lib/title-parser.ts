@@ -1,20 +1,38 @@
 // Segmentos que NÃO são o nome da competição
 const NOISE: RegExp[] = [
-  /^\d+[ªº][ª]?\s*RODADA/i,                                      // "25ª RODADA"
-  /^(PLAYOFFS?|FINAL|SEMIFINAL|QUARTAS?(\s+DE\s+FINAL)?|OITAVAS?(\s+DE\s+FINAL)?|DEZESSEIS)/i,
-  /^\d+[ªºoO]\s*DIA$/i,                                          // "3º DIA"
-  /^(GE\s*TV|GETV|SPORTV|GE\.GLOBO|PANELA\s+SPORTV)/i,          // broadcasters
-  /^#/,                                                            // hashtags
-  /^\d{4}\/\d{2,4}$/,                                             // "2025/2026" sozinho
-  /\bX\b/,                                                         // nomes de partida ("NORUEGA X SUÍÇA")
+  /^\d+[ªº][ª]?\s*RODADA/i,
+  /^(PLAYOFFS?|FINAL(IS)?|SEMIFINAL(IS)?|QUARTAS?(\s+DE\s+FINAL)?|OITAVAS?(\s+DE\s+FINAL)?|DEZESSEIS)/i,
+  /^\d+[ªºoO]\s*DIA$/i,
+  /^(GE\s*TV|GETV|SPORTV|GE\.GLOBO|PANELA\s+SPORTV)/i,
+  /^#/,
+  /^\d{4}\/\d{2,4}$/,
+  /\bX\b/,
   /^(ABERTURA|ENCERRAMENTO|QUALIFICATÓRIAS?|DUPLAS?|SIMPLES|CURLING|HÓQUEI|MISTO|MASCULINO|FEMININO)$/i,
-  /^EP\s*#?\d+$/i,                                                 // números de episódio
+  /^EP\s*#?\d+$/i,
+  /^UM\s+DIA\s+COM\b/i,   // programa, não competição
 ]
+
+// Normaliza variações para o nome canônico da competição
+const ALIASES: [RegExp, string][] = [
+  [/SINGAPURA\s+SMASH/i,              "SINGAPURA SMASH"],
+  [/OLIMP[IÍ]ADAS?\s+DE\s+INVERNO/i, "OLIMPÍADAS DE INVERNO"],
+  [/NOCHE\s+DE\s+COPA/i,             "LIBERTADORES"],
+  [/RECOPA\s+SUL.?AMERICANA/i,       "RECOPA SUL-AMERICANA"],
+  [/COPA\s+SUL.?AMERICANA/i,         "COPA SULAMERICANA"],
+  [/\bSUL.?AMERICANA\b/i,            "COPA SULAMERICANA"],
+]
+
+function resolveAlias(name: string): string {
+  for (const [re, norm] of ALIASES) {
+    if (re.test(name)) return norm
+  }
+  return name
+}
 
 function stripYear(s: string): string {
   return s
-    .replace(/\s*\b(19|20)\d{2}\s*\/\s*\d{2,4}\b\s*$/, "") // "2025/2026" ou "25/26"
-    .replace(/\s*\b(19|20)\d{2}\b\s*$/, "")                 // "2026" sozinho
+    .replace(/\s*\b(19|20)\d{2}\s*\/\s*\d{2,4}\b\s*$/, "")
+    .replace(/\s*\b(19|20)\d{2}\b\s*$/, "")
     .trim()
 }
 
@@ -30,15 +48,27 @@ export function parseCompetition(title: string): string {
 
   if (parts.length < 2) return "OUTROS"
 
-  // Varrer a partir do segmento [1] (pular o nome do jogo em [0])
+  // Verificar aliases direto nos segmentos (captura variações dentro de qualquer posição)
+  for (const [re, norm] of ALIASES) {
+    if (re.test(parts.join("|"))) {
+      // Confirmar que pelo menos um segmento não-[0] tem o alias
+      for (let i = 1; i < parts.length; i++) {
+        if (re.test(parts[i])) return norm
+      }
+    }
+  }
+
+  // Varrer a partir do segmento [1] (pular nome do jogo em [0])
   for (let i = 1; i < parts.length; i++) {
     if (NOISE.some((re) => re.test(parts[i]))) continue
-    return stripYear(parts[i]) || "OUTROS"
+    const result = stripYear(parts[i])
+    return result ? resolveAlias(result) : "OUTROS"
   }
 
   // Fallback: se [0] não for nome de jogo (sem " X "), usar [0]
   if (!/\bX\b/.test(parts[0]) && !/^AO\s+VIVO/i.test(parts[0])) {
-    return stripYear(parts[0]) || "OUTROS"
+    const result = stripYear(parts[0])
+    return result ? resolveAlias(result) : "OUTROS"
   }
 
   return "OUTROS"
