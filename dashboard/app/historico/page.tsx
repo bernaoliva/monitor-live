@@ -95,11 +95,11 @@ export default function HistoricoPage() {
     return () => unsub()
   }, [])
 
-  // 1. Filtro por canal + só competições identificadas
+  // 1. Filtro por canal (OUTROS incluído — aparece na lista como bucket)
   const channelFiltered = useMemo(() => {
     return lives.filter((l) => {
       if (channel !== "all" && l.channel.toLowerCase() !== channel) return false
-      return parseCompetition(l.title) !== "OUTROS"
+      return true
     })
   }, [lives, channel])
 
@@ -204,7 +204,7 @@ export default function HistoricoPage() {
         <div>
           <h1 className="text-sm font-bold text-white">Historico</h1>
           <p className="text-[11px] text-white/20 font-mono">
-            {stats.count} de {channelFiltered.length} transmiss{channelFiltered.length > 1 ? "oes" : "ao"} com competicao
+            {stats.count} de {channelFiltered.length} transmiss{channelFiltered.length > 1 ? "oes" : "ao"} encerrada{channelFiltered.length > 1 ? "s" : ""}
           </p>
         </div>
       </div>

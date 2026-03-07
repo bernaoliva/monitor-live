@@ -1,74 +1,65 @@
-// Segmentos que NÃO são o nome da competição
-const NOISE: RegExp[] = [
-  /^\d+[ªº][ª]?\s*RODADA/i,
-  /^(PLAYOFFS?|FINAL(IS)?|SEMIFINAL(IS)?|QUARTAS?(\s+DE\s+FINAL)?|OITAVAS?(\s+DE\s+FINAL)?|DEZESSEIS)/i,
-  /^\d+[ªºoO]\s*DIA$/i,
-  /^(GE\s*TV|GETV|SPORTV|GE\.GLOBO|PANELA\s+SPORTV)/i,
-  /^#/,
-  /^\d{4}\/\d{2,4}$/,
-  /\bX\b/,
-  /^(ABERTURA|ENCERRAMENTO|QUALIFICATÓRIAS?|DUPLAS?|SIMPLES|CURLING|HÓQUEI|MISTO|MASCULINO|FEMININO)$/i,
-  /^EP\s*#?\d+$/i,
-  /^UM\s+DIA\s+COM\b/i,   // programa, não competição
+// ── Competições conhecidas (ordem: mais específico primeiro) ──────────────
+const COMPETITIONS: [RegExp, string][] = [
+  // Olimpíadas
+  [/OLIMP[IÍ]ADAS?\s+DE\s+INVERNO/i,                       "OLIMPÍADAS DE INVERNO"],
+
+  // Futebol europeu
+  [/CONFERENCE\s+LEAGUE/i,                                   "CONFERENCE LEAGUE"],
+  [/EUROPA\s+LEAGUE/i,                                       "EUROPA LEAGUE"],
+  [/BUNDESLIGA/i,                                            "BUNDESLIGA"],
+  [/LIGUE\s*1/i,                                             "LIGUE 1"],
+  [/LA\s+LIGA/i,                                             "LA LIGA"],
+  [/PREMIER\s+LEAGUE/i,                                      "PREMIER LEAGUE"],
+  [/SÉRIE\s+A\s+ITALIANA|SERIE\s+A\s+ITALIANA/i,            "SÉRIE A ITALIANA"],
+
+  // Futebol brasileiro
+  [/COPA.*BRASIL.*FEM[A-Z]*|COPA.*FEM[A-Z]*.*BRASIL/i,      "COPA DO BRASIL FEMININO"],
+  [/COPA\s+DO\s+BRASIL/i,                                    "COPA DO BRASIL"],
+  [/BRASILEIR[AÃ]O|CAMPEONATO\s+BRASILEIRO/i,                "BRASILEIRÃO"],
+  [/CAMPEONATO\s+MINEIRO/i,                                  "CAMPEONATO MINEIRO"],
+  [/CAMPEONATO\s+CARIOCA|\bCARIOCA\b/i,                      "CAMPEONATO CARIOCA"],
+
+  // Futebol sul-americano
+  [/RECOPA\s+SUL.?AMERICANA/i,                               "RECOPA SUL-AMERICANA"],
+  [/COPA\s+SUL.?AMERICANA/i,                                 "COPA SULAMERICANA"],
+  [/\bSUL.?AMERICANA\b/i,                                    "COPA SULAMERICANA"],
+  [/LIBERTADORES|NOCHE\s+DE\s+COPA/i,                        "LIBERTADORES"],
+
+  // Futebol internacional
+  [/ELIMINATÓRIAS.*BASQUETE|BASQUETE.*ELIMINATÓRIAS/i,        "ELIMINATÓRIAS BASQUETE"],
+  [/ELIMINATÓRIAS/i,                                         "ELIMINATÓRIAS"],
+  [/AMISTOSO/i,                                              "AMISTOSO"],
+
+  // Tênis de mesa / outros esportes
+  [/SINGAPURA\s+SMASH/i,                                     "SINGAPURA SMASH"],
+  [/GRAND\s+SLAM/i,                                          "GRAND SLAM"],
+  [/GRAND\s+PRIX/i,                                          "GRAND PRIX"],
+  [/ATP\s+CHALLENGER/i,                                      "ATP CHALLENGER"],
+  [/COPA.*V[OÔ]LEI/i,                                        "COPA BRASIL DE VÔLEI"],
 ]
 
-// Normaliza variações para o nome canônico da competição
-const ALIASES: [RegExp, string][] = [
-  [/SINGAPURA\s+SMASH/i,              "SINGAPURA SMASH"],
-  [/OLIMP[IÍ]ADAS?\s+DE\s+INVERNO/i, "OLIMPÍADAS DE INVERNO"],
-  [/NOCHE\s+DE\s+COPA/i,             "LIBERTADORES"],
-  [/RECOPA\s+SUL.?AMERICANA/i,       "RECOPA SUL-AMERICANA"],
-  [/COPA\s+SUL.?AMERICANA/i,         "COPA SULAMERICANA"],
-  [/\bSUL.?AMERICANA\b/i,            "COPA SULAMERICANA"],
+// ── Programas conhecidos ───────────────────────────────────────────────────
+const PROGRAMS: [RegExp, string][] = [
+  [/GERAL\s+CAZ[EÉ]TV/i,      "GERAL CAZÉTV"],
+  [/RODA\s+DE\s+BOBO/i,       "RODA DE BOBO"],
+  [/RECOPANDO/i,               "RECOPANDO"],
+  [/TÁ\s+ON|TA\s+ON/i,        "TÁ ON"],
+  [/TROPA\s+GE\s+TV/i,        "TROPA GE TV"],
+  [/SUPERLIVE/i,               "SUPERLIVE"],
+  [/LÉRIGOU|LERIGOU/i,         "LÉRIGOU"],
+  [/DESTRINCHA\s+DONAN/i,      "DESTRINCHA DONAN"],
+  [/UM\s+DIA\s+COM/i,          "UM DIA COM"],
 ]
-
-function resolveAlias(name: string): string {
-  for (const [re, norm] of ALIASES) {
-    if (re.test(name)) return norm
-  }
-  return name
-}
-
-function stripYear(s: string): string {
-  return s
-    .replace(/\s*\b(19|20)\d{2}\s*\/\s*\d{2,4}\b\s*$/, "")
-    .replace(/\s*\b(19|20)\d{2}\b\s*$/, "")
-    .trim()
-}
-
-function cleanSegment(raw: string): string {
-  return raw.replace(/^[:\-–—]\s*/, "").trim().toUpperCase()
-}
 
 export function parseCompetition(title: string): string {
-  const parts = (title || "")
-    .split("|")
-    .map(cleanSegment)
-    .filter(Boolean)
+  const t = (title || "").toUpperCase()
 
-  if (parts.length < 2) return "OUTROS"
-
-  // Verificar aliases direto nos segmentos (captura variações dentro de qualquer posição)
-  for (const [re, norm] of ALIASES) {
-    if (re.test(parts.join("|"))) {
-      // Confirmar que pelo menos um segmento não-[0] tem o alias
-      for (let i = 1; i < parts.length; i++) {
-        if (re.test(parts[i])) return norm
-      }
-    }
+  for (const [re, name] of COMPETITIONS) {
+    if (re.test(t)) return name
   }
 
-  // Varrer a partir do segmento [1] (pular nome do jogo em [0])
-  for (let i = 1; i < parts.length; i++) {
-    if (NOISE.some((re) => re.test(parts[i]))) continue
-    const result = stripYear(parts[i])
-    return result ? resolveAlias(result) : "OUTROS"
-  }
-
-  // Fallback: se [0] não for nome de jogo (sem " X "), usar [0]
-  if (!/\bX\b/.test(parts[0]) && !/^AO\s+VIVO/i.test(parts[0])) {
-    const result = stripYear(parts[0])
-    return result ? resolveAlias(result) : "OUTROS"
+  for (const [re, name] of PROGRAMS) {
+    if (re.test(t)) return name
   }
 
   return "OUTROS"
