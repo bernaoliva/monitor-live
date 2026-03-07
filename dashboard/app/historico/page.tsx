@@ -5,10 +5,36 @@ import { collection, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live } from "@/lib/types"
 import HistoricoCard from "@/components/HistoricoCard"
-import { History } from "lucide-react"
+import { History, X } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { parseCompetition, extractCompetitions } from "@/lib/title-parser"
+import { parseCompetition } from "@/lib/title-parser"
+import {
+  BarChart, Bar, XAxis, YAxis, Cell, Tooltip,
+  ResponsiveContainer,
+} from "recharts"
+
+interface CompStat {
+  name: string
+  lives: number
+  problems: number
+}
+
+interface ChartTooltipProps {
+  active?: boolean
+  payload?: { payload: CompStat }[]
+}
+
+const ChartTooltip = ({ active, payload }: ChartTooltipProps) => {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload
+  return (
+    <div className="bg-[#1a1a24] border border-white/10 rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p className="font-bold text-white mb-1">{d.name}</p>
+      <p className="text-white/50">{d.lives} live{d.lives > 1 ? "s" : ""} · {d.problems} problemas</p>
+    </div>
+  )
+}
 
 export default function HistoricoPage() {
   const [lives, setLives] = useState<Live[]>([])
@@ -45,10 +71,22 @@ export default function HistoricoPage() {
     return () => unsub()
   }, [])
 
-  const competitions = useMemo(
-    () => extractCompetitions(lives.map((l) => l.title)),
-    [lives]
-  )
+  const compStats = useMemo((): CompStat[] => {
+    const acc: Record<string, CompStat> = {}
+    lives.forEach((live) => {
+      const comp = parseCompetition(live.title)
+      if (!acc[comp]) acc[comp] = { name: comp, lives: 0, problems: 0 }
+      acc[comp].lives++
+      acc[comp].problems += live.technical_comments
+    })
+    return Object.values(acc)
+      .filter((c) => c.lives >= 2)
+      .sort((a, b) => {
+        if (a.name === "OUTROS") return 1
+        if (b.name === "OUTROS") return -1
+        return b.problems - a.problems
+      })
+  }, [lives])
 
   const filteredLives = useMemo(() => {
     if (selectedCompetitions.size === 0) return lives
@@ -91,52 +129,93 @@ export default function HistoricoPage() {
     }
   }
 
+  const chartHeight = Math.max(compStats.length * 26 + 16, 60)
+
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="fade-up flex items-center gap-3">
-        <History size={16} className="text-white/20" />
-        <div>
-          <h1 className="text-sm font-bold text-white">Historico</h1>
-          <p className="text-[11px] text-white/20 font-mono">
-            {lives.length > 0
-              ? `${lives.length} transmiss${lives.length > 1 ? "oes" : "ao"} encerrada${lives.length > 1 ? "s" : ""}`
-              : "Nenhuma transmissao encerrada"}
-          </p>
+      <div className="fade-up flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <History size={16} className="text-white/20" />
+          <div>
+            <h1 className="text-sm font-bold text-white">Historico</h1>
+            <p className="text-[11px] text-white/20 font-mono">
+              {lives.length > 0
+                ? `${lives.length} transmiss${lives.length > 1 ? "oes" : "ao"} encerrada${lives.length > 1 ? "s" : ""}`
+                : "Nenhuma transmissao encerrada"}
+            </p>
+          </div>
         </div>
+        {selectedCompetitions.size > 0 && (
+          <button
+            onClick={() => setSelectedCompetitions(new Set())}
+            className="flex items-center gap-1.5 text-[10px] font-mono text-white/30 hover:text-white/60 transition-colors"
+          >
+            <X size={10} />
+            LIMPAR FILTRO
+          </button>
+        )}
       </div>
 
       {lives.length > 0 && (
         <>
-          {/* Competition filter chips */}
-          <div className="fade-d1 flex flex-wrap gap-2">
-            <button
-              onClick={() => setSelectedCompetitions(new Set())}
-              className={`tag border transition-colors ${
-                selectedCompetitions.size === 0
-                  ? "bg-white/15 text-white border-white/20"
-                  : "bg-white/[0.04] text-white/30 border-white/[0.06] hover:bg-white/[0.08]"
-              }`}
-            >
-              TODAS <span className="opacity-60 ml-0.5">{lives.length}</span>
-            </button>
-            {competitions.map(({ name, count }) => {
-              const active = selectedCompetitions.has(name)
-              return (
-                <button
-                  key={name}
-                  onClick={() => toggleCompetition(name)}
-                  className={`tag border transition-colors ${
-                    active
-                      ? "bg-white/15 text-white border-white/20"
-                      : "bg-white/[0.04] text-white/30 border-white/[0.06] hover:bg-white/[0.08]"
-                  }`}
+          {/* Interactive competition chart */}
+          {compStats.length > 0 && (
+            <div className="fade-d1 panel overflow-hidden px-2 pt-3 pb-2">
+              <p className="text-[8px] font-bold uppercase tracking-wider text-white/30 mb-2 px-2">
+                {selectedCompetitions.size > 0
+                  ? `${selectedCompetitions.size} selecionada${selectedCompetitions.size > 1 ? "s" : ""} — clique para alternar`
+                  : "Clique para filtrar por competição"}
+              </p>
+              <ResponsiveContainer width="100%" height={chartHeight}>
+                <BarChart
+                  data={compStats}
+                  layout="vertical"
+                  margin={{ top: 0, right: 44, left: 0, bottom: 0 }}
+                  barCategoryGap={3}
                 >
-                  {name} <span className="opacity-60 ml-0.5">{count}</span>
-                </button>
-              )
-            })}
-          </div>
+                  <XAxis type="number" hide />
+                  <YAxis
+                    dataKey="name"
+                    type="category"
+                    width={168}
+                    tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10, fontFamily: "JetBrains Mono" }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v: string) => v.length > 22 ? v.slice(0, 20) + "…" : v}
+                  />
+                  <Tooltip
+                    content={<ChartTooltip />}
+                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                  />
+                  <Bar
+                    dataKey="problems"
+                    radius={[0, 3, 3, 0]}
+                    style={{ cursor: "pointer" }}
+                    onClick={(data: CompStat) => toggleCompetition(data.name)}
+                    label={{
+                      position: "right",
+                      fill: "rgba(255,255,255,0.25)",
+                      fontSize: 10,
+                      fontFamily: "JetBrains Mono",
+                      formatter: (v: number) => v > 0 ? v : "",
+                    }}
+                  >
+                    {compStats.map((entry) => (
+                      <Cell
+                        key={entry.name}
+                        fill={
+                          selectedCompetitions.has(entry.name)
+                            ? "#ef4444"
+                            : "rgba(255,255,255,0.09)"
+                        }
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {/* Summary stats */}
           <div className="fade-d2 grid grid-cols-3 panel overflow-hidden">
