@@ -53,7 +53,7 @@ function makeTechDot(clickable: boolean) {
   }
 }
 
-export default function CommentsChart({ data, height = 220, showLegend = true, onMinuteClick, segments }: { data: ChartPoint[]; height?: number; showLegend?: boolean; onMinuteClick?: (minute: string) => void; segments?: TitleChange[] }) {
+export default function CommentsChart({ data, height = 220, showLegend = true, showXAxis = true, onMinuteClick, segments }: { data: ChartPoint[]; height?: number; showLegend?: boolean; showXAxis?: boolean; onMinuteClick?: (minute: string) => void; segments?: TitleChange[] }) {
   // IDs únicos por instância do chart para evitar conflitos SVG entre cards
   const uid = useId()
   const gradTotalId = `gradTotal-${uid}`
@@ -74,7 +74,7 @@ export default function CommentsChart({ data, height = 220, showLegend = true, o
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart
         data={data}
-        margin={{ top: 4, right: 8, left: -20, bottom: showLegend ? 28 : 12 }}
+        margin={{ top: 4, right: 0, left: 8, bottom: showLegend ? 24 : showXAxis ? 6 : 2 }}
         style={onMinuteClick ? { cursor: "pointer" } : undefined}
         onClick={onMinuteClick ? (e) => {
           if (e?.activeLabel) onMinuteClick(e.activeLabel as string)
@@ -93,16 +93,19 @@ export default function CommentsChart({ data, height = 220, showLegend = true, o
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
         <XAxis
           dataKey="minute"
-          tick={{ fill: "rgba(255,255,255,0.25)", fontSize: 10, fontFamily: "JetBrains Mono" }}
+          hide={!showXAxis}
+          tick={{ fill: "rgba(255,255,255,0.25)", fontSize: 8, fontFamily: "JetBrains Mono" }}
           tickLine={false}
           axisLine={false}
           interval={tickInterval}
-          angle={-40}
-          textAnchor="end"
+          angle={40}
+          textAnchor="start"
           dy={4}
           tickFormatter={(val: string) => val.slice(-5)}
         />
         <YAxis
+          orientation="right"
+          width={28}
           tick={{ fill: "rgba(255,255,255,0.25)", fontSize: 11 }}
           tickLine={false}
           axisLine={false}
