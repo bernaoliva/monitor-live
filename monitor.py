@@ -222,7 +222,8 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
             upd["title"] = resolved_title
             upd["title_history"] = fb_firestore.ArrayUnion([resolved_title])
             # Registrar troca de título com timestamp (para segmentos no gráfico)
-            if resolved_title != old_title:
+            # old_title vazio = primeiro fetch após restart; não é uma troca real de título
+            if old_title and resolved_title != old_title:
                 upd["title_changes"] = fb_firestore.ArrayUnion([{
                     "title": resolved_title,
                     "ts":    now_iso(),
