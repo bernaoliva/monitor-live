@@ -323,11 +323,6 @@ export default function LiveCard({
               className={`font-bold text-white leading-tight block ${ultraDense ? "text-[9px] line-clamp-1" : denseHeader ? "text-[10px] line-clamp-1" : "text-[12px] line-clamp-2"}`}
             >
               {live.title || live.video_id}
-              {!ultraDense && !denseHeader && live.title_history && live.title_history.length > 1 && (
-                <span className="ml-1.5 text-[8px] text-white/25 font-mono font-normal align-middle">
-                  +{live.title_history.length - 1} título{live.title_history.length - 1 > 1 ? "s" : ""}
-                </span>
-              )}
             </span>
             <div className={`flex items-center gap-2 ${ultraDense ? "mt-0" : "mt-0.5"}`}>
               {live.url && (
@@ -398,7 +393,7 @@ export default function LiveCard({
           </div>
         )}
         <div className="relative z-[1]">
-          <CommentsChart data={chartDataDisplay} height={chartHeight} showLegend={false} onMinuteClick={handleMinuteClick} />
+          <CommentsChart data={chartDataDisplay} height={chartHeight} showLegend={false} onMinuteClick={handleMinuteClick} segments={live.title_changes && live.title_changes.length > 1 ? live.title_changes : undefined} />
           {ytFeedback && (
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none flex items-center gap-1.5 bg-black/80 border border-red-500/40 rounded-lg px-3 py-1.5 text-[11px] font-mono text-red-400 shadow-xl">
               <span>↗ YouTube</span>

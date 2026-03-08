@@ -136,7 +136,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
     if (live.title_changes && live.title_changes.length > 0) {
       return [...live.title_changes].sort((a, b) => a.ts.localeCompare(b.ts))
     }
-    const hist = live.title_history ?? [live.title]
+    const hist = live.title_history && live.title_history.length > 0 ? live.title_history : [live.title]
     return hist.map((t) => ({ title: t }))
   }, [live.title, live.title_history, live.title_changes])
 
