@@ -16,6 +16,12 @@ export interface Live {
   concurrent_viewers?: number
   gpu_active?: boolean
   title_history?: string[]
+  title_changes?: TitleChange[]
+}
+
+export interface TitleChange {
+  title: string
+  ts: string
 }
 
 export interface Comment {

@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import { collection, onSnapshot, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import { Live } from "@/lib/types"
+import { Live, TitleChange } from "@/lib/types"
 import HistoricoCard from "@/components/HistoricoCard"
 import { History } from "lucide-react"
 import { format, parseISO } from "date-fns"
@@ -54,15 +54,27 @@ const CHANNEL_LABELS: Record<ChannelFilter, string> = {
   getv:   "GETV",
 }
 
+// Retorna TODAS as competições/programas encontrados nos títulos da live
+function getLiveCompetitions(live: Live): string[] {
+  const titles = live.title_changes?.map((tc: TitleChange) => tc.title)
+    ?? live.title_history
+    ?? [live.title]
+  const comps = new Set(titles.map(parseCompetition))
+  return [...comps]
+}
+
 // ── Página ─────────────────────────────────────────────────────────────────
 export default function HistoricoPage() {
   const [lives,                 setLives]                = useState<Live[]>([])
   const [channel,               setChannel]              = useState<ChannelFilter>("all")
   const [selectedCompetitions,  setSelectedCompetitions] = useState<Set<string>>(new Set())
+  const [dateFrom,              setDateFrom]             = useState("")
+  const [dateTo,                setDateTo]               = useState("")
 
   // Cache de categorias por video_id (busca na subcoleção comments, igual HistoricoCard)
   const catCacheRef = useRef<Record<string, Record<string, number>>>({})
-  const [catCache,  setCatCache]  = useState<Record<string, Record<string, number>>>({})
+  const [catCache,     setCatCache]     = useState<Record<string, Record<string, number>>>({})
+  const [fetchingCats, setFetchingCats] = useState(false)
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "lives"), (snap) => {
@@ -82,6 +94,7 @@ export default function HistoricoPage() {
             technical_comments: d.technical_comments ?? 0,
             issue_counts:       d.issue_counts       ?? {},
             title_history:      d.title_history      ?? [],
+            title_changes:      d.title_changes      ?? undefined,
           } satisfies Live
         })
         .filter((l) => l.status === "ended" || !!l.ended_at)
@@ -103,12 +116,13 @@ export default function HistoricoPage() {
     })
   }, [lives, channel])
 
-  // 2. Lista de competições disponíveis (do canal selecionado)
+  // 2. Lista de competições disponíveis (do canal selecionado) — cada live pode ter várias
   const competitions = useMemo(() => {
     const acc: Record<string, number> = {}
     channelFiltered.forEach((l) => {
-      const comp = parseCompetition(l.title)
-      acc[comp] = (acc[comp] || 0) + 1
+      getLiveCompetitions(l).forEach((comp) => {
+        acc[comp] = (acc[comp] || 0) + 1
+      })
     })
     return Object.entries(acc)
       .map(([name, count]) => ({ name, count }))
@@ -118,19 +132,28 @@ export default function HistoricoPage() {
   // Limpar competições selecionadas ao trocar canal
   useEffect(() => { setSelectedCompetitions(new Set()) }, [channel])
 
-  // 3. Filtro completo (canal + competição)
+  // 3. Filtro completo (canal + competição + data) — live aparece se QUALQUER competição der match
   const fullyFiltered = useMemo(() => {
-    if (selectedCompetitions.size === 0) return channelFiltered
-    return channelFiltered.filter((l) => selectedCompetitions.has(parseCompetition(l.title)))
-  }, [channelFiltered, selectedCompetitions])
+    return channelFiltered.filter((l) => {
+      if (selectedCompetitions.size > 0) {
+        const liveComps = getLiveCompetitions(l)
+        if (!liveComps.some((c) => selectedCompetitions.has(c))) return false
+      }
+      const dateStr = (l.ended_at ?? l.started_at ?? "").slice(0, 10)
+      if (dateFrom && dateStr < dateFrom) return false
+      if (dateTo   && dateStr > dateTo)   return false
+      return true
+    })
+  }, [channelFiltered, selectedCompetitions, dateFrom, dateTo])
 
-  // 4. Busca categorias da subcoleção comments — só quando ≤50 lives filtradas
-  //    (evita N>50 queries simultâneas quando nenhum filtro está ativo)
+  // 4. Busca categorias da subcoleção comments
+  //    Só bloqueia quando NENHUMA competição está selecionada e há muitas lives (tela inicial)
   useEffect(() => {
-    if (fullyFiltered.length > 50) return
+    if (selectedCompetitions.size === 0 && fullyFiltered.length > 50) return
     const missing = fullyFiltered.filter((l) => !catCacheRef.current[l.video_id])
     if (missing.length === 0) return
 
+    setFetchingCats(true)
     Promise.all(
       missing.map(async (live) => {
         const snap = await getDocs(
@@ -143,8 +166,11 @@ export default function HistoricoPage() {
         })
         catCacheRef.current[live.video_id] = cats
       })
-    ).then(() => setCatCache({ ...catCacheRef.current }))
-  }, [fullyFiltered])
+    ).then(() => {
+      setCatCache({ ...catCacheRef.current })
+      setFetchingCats(false)
+    })
+  }, [fullyFiltered, selectedCompetitions])
 
   // 5. Agrega categorias do cache para o pie
   const pieData = useMemo(() => {
@@ -240,18 +266,59 @@ export default function HistoricoPage() {
               </div>
             </div>
 
+            {/* Filtro por data */}
+            <div>
+              <p className="text-[8px] font-bold uppercase tracking-wider text-white/30 mb-2">Período</p>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <p className="text-[8px] text-white/20 font-mono mb-1">De</p>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded px-2 py-1 text-[10px] font-mono text-white/50 [color-scheme:dark] focus:outline-none focus:border-white/20"
+                  />
+                </div>
+                <div className="flex-1">
+                  <p className="text-[8px] text-white/20 font-mono mb-1">Até</p>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded px-2 py-1 text-[10px] font-mono text-white/50 [color-scheme:dark] focus:outline-none focus:border-white/20"
+                  />
+                </div>
+                {(dateFrom || dateTo) && (
+                  <button
+                    onClick={() => { setDateFrom(""); setDateTo("") }}
+                    className="text-[9px] font-mono text-white/20 hover:text-white/45 transition-colors mt-4"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Competição */}
             <div className="flex-1">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[8px] font-bold uppercase tracking-wider text-white/30">Competição</p>
-                {selectedCompetitions.size > 0 && (
+                <div className="flex items-center gap-3">
                   <button
-                    onClick={() => setSelectedCompetitions(new Set())}
+                    onClick={() => setSelectedCompetitions(new Set(competitions.map((c) => c.name)))}
                     className="text-[9px] font-mono text-white/25 hover:text-white/50 transition-colors"
                   >
-                    limpar
+                    marcar todos
                   </button>
-                )}
+                  {selectedCompetitions.size > 0 && (
+                    <button
+                      onClick={() => setSelectedCompetitions(new Set())}
+                      className="text-[9px] font-mono text-white/25 hover:text-white/50 transition-colors"
+                    >
+                      limpar
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="space-y-0.5 max-h-52 overflow-y-auto pr-1">
                 {competitions.map(({ name, count }) => {
@@ -283,11 +350,15 @@ export default function HistoricoPage() {
               Categorias de problemas
             </p>
 
-            {fullyFiltered.length > 50 ? (
+            {selectedCompetitions.size === 0 && fullyFiltered.length > 50 ? (
               <div className="flex-1 flex items-center justify-center text-center px-4">
                 <p className="text-white/20 text-[11px] font-mono leading-relaxed">
                   Selecione uma competição<br />para ver o breakdown de categorias
                 </p>
+              </div>
+            ) : fetchingCats ? (
+              <div className="flex-1 flex items-center justify-center text-white/20 text-[11px] font-mono">
+                carregando...
               </div>
             ) : pieData.length > 0 ? (
               <>

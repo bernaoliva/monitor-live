@@ -10,6 +10,7 @@ import { ArrowRight } from "lucide-react"
 import { format } from "date-fns"
 import { computeHealthScore } from "@/lib/health-score"
 import { parseCompetition } from "@/lib/title-parser"
+import { TitleChange } from "@/lib/types"
 
 function buildChartData(comments: Comment[]): ChartPoint[] {
   const buckets: Record<string, { total: number; technical: number }> = {}
@@ -130,7 +131,25 @@ export default function HistoricoCard({ live }: { live: Live }) {
     ? format(new Date(live.started_at), "dd/MM HH:mm")
     : "—"
 
-  const competition = parseCompetition(live.title)
+  // Todos os títulos com mesmo peso — usa title_changes (com timestamp) ou fallback title_history
+  const allTitles: { title: string; ts?: string }[] = useMemo(() => {
+    if (live.title_changes && live.title_changes.length > 0) {
+      return [...live.title_changes].sort((a, b) => a.ts.localeCompare(b.ts))
+    }
+    const hist = live.title_history ?? [live.title]
+    return hist.map((t) => ({ title: t }))
+  }, [live.title, live.title_history, live.title_changes])
+
+  // Competições únicas de todos os títulos
+  const allCompetitions = useMemo(() => {
+    const seen = new Set<string>()
+    const result: string[] = []
+    allTitles.forEach(({ title }) => {
+      const comp = parseCompetition(title)
+      if (comp !== "OUTROS" && !seen.has(comp)) { seen.add(comp); result.push(comp) }
+    })
+    return result
+  }, [allTitles])
 
   const accentClass =
     healthScore.score >= 80 ? "accent-bar-green" :
@@ -141,34 +160,27 @@ export default function HistoricoCard({ live }: { live: Live }) {
       {/* Header */}
       <div className="flex items-start justify-between px-4 pt-4 pb-3">
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-1.5">
             <span className="tag bg-white/[0.04] text-white/35 border border-white/[0.06]">
               ENCERRADA
             </span>
-            {competition !== "OUTROS" && (
-              <span className="tag bg-white/[0.06] text-white/45 border border-white/[0.08]">
-                {competition}
+            {allCompetitions.map((comp) => (
+              <span key={comp} className="tag bg-white/[0.06] text-white/45 border border-white/[0.08]">
+                {comp}
               </span>
-            )}
+            ))}
             <span className="text-[10px] text-white/25 font-mono">{startDate}</span>
             <span className="text-[10px] text-white/20 font-mono">
               {formatDuration(live.started_at, live.ended_at)}
             </span>
           </div>
-          <h3 className="font-bold text-white/80 text-sm leading-snug line-clamp-2 pr-4">
-            {live.title || live.video_id}
-          </h3>
-          {live.title_history && live.title_history.length > 1 && (
-            <div className="flex flex-wrap gap-1 pt-0.5">
-              {live.title_history
-                .filter((t) => t !== live.title)
-                .map((t, i) => (
-                  <span key={i} className="text-[9px] text-white/25 font-mono bg-white/[0.03] border border-white/[0.06] rounded px-1.5 py-0.5 line-clamp-1 max-w-[200px]">
-                    {t}
-                  </span>
-                ))}
-            </div>
-          )}
+          <div className="space-y-0.5 pt-0.5 pr-4">
+            {allTitles.map(({ title }, i) => (
+              <p key={i} className="font-bold text-white/80 text-sm leading-snug line-clamp-2">
+                {title}
+              </p>
+            ))}
+          </div>
         </div>
         <Link
           href={`/live/${live.video_id}`}
@@ -252,7 +264,10 @@ export default function HistoricoCard({ live }: { live: Live }) {
       {/* Chart */}
       {chartData.length > 0 && (
         <div className="px-4 pt-3 pb-1">
-          <CommentsChart data={chartData} />
+          <CommentsChart
+            data={chartData}
+            segments={live.title_changes && live.title_changes.length > 1 ? live.title_changes : undefined}
+          />
         </div>
       )}
     </div>

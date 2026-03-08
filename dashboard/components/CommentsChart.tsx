@@ -3,9 +3,10 @@
 import { useMemo, useId } from "react"
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts"
-import { ChartPoint } from "@/lib/types"
+import { ChartPoint, TitleChange } from "@/lib/types"
+import { parseCompetition } from "@/lib/title-parser"
 
 interface TooltipPayloadEntry {
   dataKey: string
@@ -52,7 +53,7 @@ function makeTechDot(clickable: boolean) {
   }
 }
 
-export default function CommentsChart({ data, height = 220, showLegend = true, onMinuteClick }: { data: ChartPoint[]; height?: number; showLegend?: boolean; onMinuteClick?: (minute: string) => void }) {
+export default function CommentsChart({ data, height = 220, showLegend = true, onMinuteClick, segments }: { data: ChartPoint[]; height?: number; showLegend?: boolean; onMinuteClick?: (minute: string) => void; segments?: TitleChange[] }) {
   // IDs únicos por instância do chart para evitar conflitos SVG entre cards
   const uid = useId()
   const gradTotalId = `gradTotal-${uid}`
@@ -131,6 +132,25 @@ export default function CommentsChart({ data, height = 220, showLegend = true, o
           dot={makeTechDot(!!onMinuteClick)}
           isAnimationActive={false}
         />
+        {segments?.slice(1).map((seg, i) => {
+          const label = parseCompetition(seg.title)
+          const x = seg.ts.slice(0, 16)
+          return (
+            <ReferenceLine
+              key={i}
+              x={x}
+              stroke="rgba(255,255,255,0.18)"
+              strokeDasharray="4 3"
+              label={label !== "OUTROS" ? {
+                value: label,
+                position: "insideTopRight",
+                fill: "rgba(255,255,255,0.30)",
+                fontSize: 9,
+                fontFamily: "JetBrains Mono",
+              } : undefined}
+            />
+          )
+        })}
       </AreaChart>
     </ResponsiveContainer>
   )
