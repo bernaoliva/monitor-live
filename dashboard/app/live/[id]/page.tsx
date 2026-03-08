@@ -114,6 +114,7 @@ export default function LivePage() {
         issue_counts:        d.issue_counts        ?? {},
         concurrent_viewers:  d.concurrent_viewers  ?? undefined,
         title_history:       d.title_history       ?? undefined,
+        title_changes:       d.title_changes       ?? undefined,
       } satisfies Live)
     })
 
@@ -347,7 +348,10 @@ export default function LivePage() {
       <div className="grid md:grid-cols-3 gap-2.5">
         <div className="md:col-span-2 panel p-4">
           <p className="metric-label mb-3">Volume por minuto</p>
-          <CommentsChart data={chartData} />
+          <CommentsChart
+            data={chartData}
+            segments={live?.title_changes && live.title_changes.length > 1 ? live.title_changes : undefined}
+          />
         </div>
 
         <div className="panel p-4 space-y-3">

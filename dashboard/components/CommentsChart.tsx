@@ -137,11 +137,15 @@ export default function CommentsChart({ data, height = 220, showLegend = true, s
         />
         {segments?.slice(1).map((seg, i) => {
           const label = parseCompetition(seg.title)
-          const x = seg.ts.slice(0, 16)
+          const ts16 = seg.ts.slice(0, 16)
+          // Snap ao minuto mais próximo disponível no chartData —
+          // a troca pode ter ocorrido num minuto sem comentários (sem entry na subcoleção)
+          const snap = data.find((d) => d.minute >= ts16)?.minute ?? data[data.length - 1]?.minute
+          if (!snap) return null
           return (
             <ReferenceLine
               key={i}
-              x={x}
+              x={snap}
               stroke="rgba(255,255,255,0.18)"
               strokeDasharray="4 3"
               label={label !== "OUTROS" ? {
