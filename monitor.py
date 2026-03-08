@@ -88,7 +88,7 @@ CHAT_DEDUP_WINDOW              = 5000
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # IA — Cloud Run (DistilBERT fine-tuned)
-SERVING_URL     = os.environ.get("SERVING_URL", "SUA_URL_CLOUD_RUN")
+SERVING_URL     = os.environ.get("SERVING_URL", "https://SUA_URL_CLOUD_RUN")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
 
@@ -210,6 +210,7 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
     try:
         fs = _get_fs()
         if not fs: return
+        old_title      = _title_cache.get(video_id, "")   # salvar ANTES de _best_title atualizar cache
         resolved_title = _best_title(video_id, title)
         upd: Dict[str, object] = {
             "channel":      channel,
@@ -219,6 +220,13 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
         }
         if resolved_title:
             upd["title"] = resolved_title
+            upd["title_history"] = fb_firestore.ArrayUnion([resolved_title])
+            # Registrar troca de título com timestamp (para segmentos no gráfico)
+            if resolved_title != old_title:
+                upd["title_changes"] = fb_firestore.ArrayUnion([{
+                    "title": resolved_title,
+                    "ts":    now_iso(),
+                }])
         # Audiência: busca apenas 1x por minuto para não estourar quota da API
         now_t = time.time()
         if now_t - _last_viewer_fetch.get(video_id, 0) >= VIEWER_FETCH_INTERVAL:
@@ -774,7 +782,7 @@ _LOCAL_HEALTH_RECHECK = 30.0
 
 _KEYWORD_FALLBACK = [
     # (regex, category, issue, severity)
-    (re.compile(r"\b(?:sem\s+(?:audio|áudio|som|narr))\b", re.I),         "AUDIO", "sem_audio",        "high"),
+    (re.compile(r"\b(?:sem\s+(?:audio|áudio|som))\b", re.I),              "AUDIO", "sem_audio",        "high"),
     (re.compile(r"\b(?:audio|áudio|som)\s+(?:estouran|estourad|chiand|ruim|ruído|horrivel|horrível|péssim|pessim|muito\s+alto|alto\s+demais|baixo|baixíssim|abafad|cortand)", re.I),
                                                                             "AUDIO", "qualidade_audio",  "medium"),
     (re.compile(r"\b(?:som|audio|áudio)\s+(?:ruim|horrivel|horrível|péssim|pessim)\b", re.I),
@@ -845,7 +853,7 @@ def _keyword_override(text: str) -> Optional[dict]:
 # Validação: pelo menos uma palavra técnica precisa estar presente para aceitar positivo do modelo
 _TECH_KEYWORDS = re.compile(
     r"(?:"
-    r"\b(?:audio|áudio)\b|\bsom\b|\bnarr|\bmicrofone|\bmic\b"  # áudio
+    r"\b(?:audio|áudio)\b|\bsom\b|\bmicrofone|\bmic\b"          # áudio
     r"|\b(?:video|vídeo)\b|\btela\b|\bimagem\b|\bpixel|\bqualidade\b"  # vídeo
     r"|\btravand|\btravan|\btravou\b|\btravad|\bfreez"             # travamento (congel removido — ambíguo com clima)
     r"|\bbuffer|\blag\b|\blagand|\blagou\b|\bping\b|\bcaiu\b|\bcarregan|\bloadin|\bvascou\b|\bvascand"  # rede
@@ -1341,12 +1349,16 @@ def _process_batch(items: list):
         ts_val    = it["ts"]
         minute_key = ts_val[:16] if len(ts_val) >= 16 else ""
         if minute_key and len(minute_key) == 16:
+            _min_data: dict = {
+                "total":     fb_firestore.Increment(1),
+                "technical": fb_firestore.Increment(1 if is_tech else 0),
+            }
+            _vc = _viewer_cache.get(it["vid"])
+            if _vc is not None:
+                _min_data["viewers"] = _vc
             batch.set(
                 live_ref.collection("minutes").document(minute_key),
-                {
-                    "total":     fb_firestore.Increment(1),
-                    "technical": fb_firestore.Increment(1 if is_tech else 0),
-                },
+                _min_data,
                 merge=True,
             )
             batch_ops += 1
