@@ -63,17 +63,20 @@ export function computeHealthScore(
 
   // 4. Histórico acumulado
   const cumulWeighted = comments.reduce((s, c) => s + commentWeight(c.severity, c.issue), 0)
-  const msgPenalty = Math.min((cumulWeighted / logV) * 0.5, 30)
+  const msgPenalty = Math.min((cumulWeighted / logV) * 1.5, 30)
 
   let spikeIntensity = 0
   for (const p of sorted) {
-    if (p.technical >= 3) spikeIntensity += Math.floor(p.technical / 3)
+    if (p.technical >= 2) spikeIntensity += Math.floor(p.technical / 2)
   }
   const history = Math.min(msgPenalty + Math.min(spikeIntensity, 40), 55)
 
+  // 5. Penalidade fixa por reclamação (independe de audiência e janela de tempo)
+  const countPenalty = Math.min(comments.length * 1.0, 20)
+
   // Score final
   const realtime = Math.min(basePenalty + spikePenalty + velocityPenalty, 60)
-  const score    = Math.max(0, Math.floor(100 - realtime - history))
+  const score    = Math.max(0, Math.floor(100 - realtime - history - countPenalty))
 
   const level = score >= 80 ? "OK" : score >= 50 ? "ATENÇÃO" : score >= 25 ? "ALERTA" : "CRÍTICO"
   const color = score >= 80 ? "#22c55e" : score >= 50 ? "#eab308" : score >= 25 ? "#f97316" : "#ef4444"
