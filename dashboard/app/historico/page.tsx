@@ -57,7 +57,7 @@ const CHANNEL_LABELS: Record<ChannelFilter, string> = {
 // Retorna TODAS as competições/programas encontrados nos títulos da live
 function getLiveCompetitions(live: Live): string[] {
   const titles = live.title_changes?.map((tc: TitleChange) => tc.title)
-    ?? live.title_history
+    ?? (live.title_history && live.title_history.length > 0 ? live.title_history : null)
     ?? [live.title]
   const comps = new Set(titles.map(parseCompetition))
   return [...comps]
@@ -70,9 +70,12 @@ export default function HistoricoPage() {
   const [selectedCompetitions,  setSelectedCompetitions] = useState<Set<string>>(new Set())
   const [dateFrom,              setDateFrom]             = useState("")
   const [dateTo,                setDateTo]               = useState("")
+  const [searchQuery,           setSearchQuery]          = useState("")
 
   // Cache de categorias por video_id (busca na subcoleção comments, igual HistoricoCard)
-  const catCacheRef = useRef<Record<string, Record<string, number>>>({})
+  const catCacheRef       = useRef<Record<string, Record<string, number>>>({})
+  const autoSelectedRef   = useRef(false)
+  const prevChannelRef    = useRef<ChannelFilter>("all")
   const [catCache,     setCatCache]     = useState<Record<string, Record<string, number>>>({})
   const [fetchingCats, setFetchingCats] = useState(false)
 
@@ -93,6 +96,7 @@ export default function HistoricoPage() {
             total_comments:     d.total_comments     ?? 0,
             technical_comments: d.technical_comments ?? 0,
             issue_counts:       d.issue_counts       ?? {},
+            concurrent_viewers: d.concurrent_viewers ?? null,
             title_history:      d.title_history      ?? [],
             title_changes:      d.title_changes      ?? undefined,
           } satisfies Live
@@ -129,11 +133,24 @@ export default function HistoricoPage() {
       .sort((a, b) => b.count - a.count)
   }, [channelFiltered])
 
-  // Limpar competições selecionadas ao trocar canal
-  useEffect(() => { setSelectedCompetitions(new Set()) }, [channel])
+  // Auto-selecionar todas as competições no primeiro load e ao trocar canal
+  useEffect(() => {
+    if (competitions.length === 0) return
+    if (!autoSelectedRef.current) {
+      setSelectedCompetitions(new Set(competitions.map((c) => c.name)))
+      autoSelectedRef.current = true
+      prevChannelRef.current = channel
+      return
+    }
+    if (prevChannelRef.current !== channel) {
+      prevChannelRef.current = channel
+      setSelectedCompetitions(new Set(competitions.map((c) => c.name)))
+    }
+  }, [channel, competitions])
 
-  // 3. Filtro completo (canal + competição + data) — live aparece se QUALQUER competição der match
+  // 3. Filtro completo (canal + competição + data + busca)
   const fullyFiltered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
     return channelFiltered.filter((l) => {
       if (selectedCompetitions.size > 0) {
         const liveComps = getLiveCompetitions(l)
@@ -142,20 +159,29 @@ export default function HistoricoPage() {
       const dateStr = (l.ended_at ?? l.started_at ?? "").slice(0, 10)
       if (dateFrom && dateStr < dateFrom) return false
       if (dateTo   && dateStr > dateTo)   return false
+      if (q) {
+        const allTitles = l.title_changes?.map((tc) => tc.title)
+          ?? (l.title_history && l.title_history.length > 0 ? l.title_history : [l.title])
+        if (!allTitles.some((t) => t.toLowerCase().includes(q))) return false
+      }
       return true
     })
-  }, [channelFiltered, selectedCompetitions, dateFrom, dateTo])
+  }, [channelFiltered, selectedCompetitions, dateFrom, dateTo, searchQuery])
 
-  // 4. Busca categorias da subcoleção comments
-  //    Só bloqueia quando NENHUMA competição está selecionada e há muitas lives (tela inicial)
+  // 4. Busca categorias com concurrency limitada (max 10 paralelas)
   useEffect(() => {
-    if (selectedCompetitions.size === 0 && fullyFiltered.length > 50) return
     const missing = fullyFiltered.filter((l) => !catCacheRef.current[l.video_id])
     if (missing.length === 0) return
 
     setFetchingCats(true)
-    Promise.all(
-      missing.map(async (live) => {
+    let cancelled = false
+    const CONCURRENCY = 10
+    let idx = 0
+
+    async function worker() {
+      while (idx < missing.length && !cancelled) {
+        const i = idx++
+        const live = missing[i]
         const snap = await getDocs(
           query(collection(db, "lives", live.video_id, "comments"), where("is_technical", "==", true))
         )
@@ -165,12 +191,21 @@ export default function HistoricoPage() {
           if (cat) cats[cat] = (cats[cat] || 0) + 1
         })
         catCacheRef.current[live.video_id] = cats
-      })
+        if (i % 10 === 9 && !cancelled) setCatCache({ ...catCacheRef.current })
+      }
+    }
+
+    Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, missing.length) }, () => worker())
     ).then(() => {
-      setCatCache({ ...catCacheRef.current })
-      setFetchingCats(false)
+      if (!cancelled) {
+        setCatCache({ ...catCacheRef.current })
+        setFetchingCats(false)
+      }
     })
-  }, [fullyFiltered, selectedCompetitions])
+
+    return () => { cancelled = true }
+  }, [fullyFiltered])
 
   // 5. Agrega categorias do cache para o pie
   const pieData = useMemo(() => {
@@ -200,11 +235,19 @@ export default function HistoricoPage() {
       .map(([date, groupLives]) => ({ date, groupLives }))
   }, [fullyFiltered])
 
-  const stats = useMemo(() => ({
-    count:    fullyFiltered.length,
-    msgs:     fullyFiltered.reduce((s, l) => s + l.total_comments, 0),
-    problems: fullyFiltered.reduce((s, l) => s + l.technical_comments, 0),
-  }), [fullyFiltered])
+  const summaryStats = useMemo(() => {
+    let totalHoursMs = 0
+    fullyFiltered.forEach((l) => {
+      if (l.started_at && l.ended_at) {
+        totalHoursMs += new Date(l.ended_at).getTime() - new Date(l.started_at).getTime()
+      }
+    })
+    const totalHours = Math.round(totalHoursMs / 3600000 * 10) / 10
+    const msgs     = fullyFiltered.reduce((s, l) => s + l.total_comments, 0)
+    const problems = fullyFiltered.reduce((s, l) => s + l.technical_comments, 0)
+    const rate     = msgs > 0 ? Math.round((problems / msgs) * 100) : 0
+    return { count: fullyFiltered.length, msgs, problems, rate, totalHours }
+  }, [fullyFiltered])
 
   function toggleCompetition(name: string) {
     setSelectedCompetitions((prev) => {
@@ -299,6 +342,28 @@ export default function HistoricoPage() {
               </div>
             </div>
 
+            {/* Busca por título */}
+            <div>
+              <p className="text-[8px] font-bold uppercase tracking-wider text-white/30 mb-2">Buscar</p>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Nome da transmissão..."
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded px-2 py-1.5 text-[10px] font-mono text-white/60 placeholder:text-white/20 focus:outline-none focus:border-white/20"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/50 text-[9px]"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Competição */}
             <div className="flex-1">
               <div className="flex items-center justify-between mb-2">
@@ -350,13 +415,7 @@ export default function HistoricoPage() {
               Categorias de problemas
             </p>
 
-            {selectedCompetitions.size === 0 && fullyFiltered.length > 50 ? (
-              <div className="flex-1 flex items-center justify-center text-center px-4">
-                <p className="text-white/20 text-[11px] font-mono leading-relaxed">
-                  Selecione uma competição<br />para ver o breakdown de categorias
-                </p>
-              </div>
-            ) : fetchingCats ? (
+            {fetchingCats ? (
               <div className="flex-1 flex items-center justify-center text-white/20 text-[11px] font-mono">
                 carregando...
               </div>
@@ -410,12 +469,6 @@ export default function HistoricoPage() {
                   })}
                 </div>
 
-                {/* Mini stats */}
-                <div className="mt-auto pt-3 border-t border-white/[0.06] flex gap-4 text-[9px] font-mono text-white/25">
-                  <span>{stats.count} live{stats.count > 1 ? "s" : ""}</span>
-                  <span>{stats.msgs.toLocaleString("pt-BR")} msgs</span>
-                  <span className="text-red-400/50">{stats.problems.toLocaleString("pt-BR")} problemas</span>
-                </div>
               </>
             ) : (
               <div className="flex-1 flex items-center justify-center text-white/20 text-xs font-mono">
@@ -423,6 +476,22 @@ export default function HistoricoPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Stats strip agregado */}
+      {fullyFiltered.length > 0 && (
+        <div className="fade-d1 panel grid grid-cols-3 divide-x divide-white/[0.06]">
+          {[
+            { label: "Lives",     value: summaryStats.count.toString() },
+            { label: "Msgs",      value: summaryStats.msgs.toLocaleString("pt-BR") },
+            { label: "Problemas", value: summaryStats.problems.toLocaleString("pt-BR"), color: summaryStats.problems > 0 ? "text-red-400" : undefined },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="px-3 py-2.5">
+              <p className="text-[8px] font-bold uppercase tracking-wider text-white/40 mb-1">{label}</p>
+              <p className={`font-data text-base font-black ${color ?? "text-white"}`}>{value}</p>
+            </div>
+          ))}
         </div>
       )}
 

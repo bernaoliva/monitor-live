@@ -58,6 +58,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
   const [techComments, setTechComments] = useState<Comment[]>([])
   const [peakViewers, setPeakViewers]   = useState<number | null>(null)
   const [avgViewers,  setAvgViewers]    = useState<number | null>(null)
+  const [minutePoints, setMinutePoints] = useState<ChartPoint[]>([])
 
   useEffect(() => {
     getDocs(collection(db, "lives", live.video_id, "minutes")).then((snap) => {
@@ -68,6 +69,14 @@ export default function HistoricoCard({ live }: { live: Live }) {
         setPeakViewers(Math.max(...vals))
         setAvgViewers(Math.round(vals.reduce((s, v) => s + v, 0) / vals.length))
       }
+      const pts: ChartPoint[] = snap.docs
+        .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))
+        .map((d) => {
+          const raw = d.data()
+          return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined }
+        })
+        .sort((a, b) => a.minute.localeCompare(b.minute))
+      setMinutePoints(pts)
     })
   }, [live.video_id])
 
@@ -96,7 +105,12 @@ export default function HistoricoCard({ live }: { live: Live }) {
     return () => unsub()
   }, [live.video_id])
 
-  const chartData = useMemo(() => buildChartData(techComments), [techComments])
+  // Usa minutePoints (subcoleção minutes/) quando disponível — mesma fonte que live/[id]
+  // Fallback para buildChartData enquanto os docs ainda não carregaram
+  const chartData = useMemo(
+    () => minutePoints.length > 0 ? minutePoints : buildChartData(techComments),
+    [minutePoints, techComments],
+  )
 
   const techRate = Math.round(
     ((live.technical_comments || 0) / Math.max(live.total_comments, 1)) * 100
@@ -164,6 +178,15 @@ export default function HistoricoCard({ live }: { live: Live }) {
             <span className="tag bg-white/[0.04] text-white/35 border border-white/[0.06]">
               ENCERRADA
             </span>
+            {live.channel && (
+              <span className={`tag ${
+                live.channel.toUpperCase() === "GETV"
+                  ? "bg-emerald-500/10 text-emerald-400/70 border border-emerald-500/20"
+                  : "bg-white/[0.06] text-white/50 border border-white/[0.08]"
+              }`}>
+                {live.channel.toUpperCase() === "GETV" ? "GETV" : "CAZÉTV"}
+              </span>
+            )}
             {allCompetitions.map((comp) => (
               <span key={comp} className="tag bg-white/[0.06] text-white/45 border border-white/[0.08]">
                 {comp}
