@@ -233,7 +233,10 @@ export default function LivePage() {
   )
 
   const handleMinuteClick = useCallback((minuteKey: string) => {
-    const effectiveStart = live?.started_at || chartPoints[0]?.minute || ""
+    const firstMinute = chartPoints[0]?.minute || ""
+    const sa = live?.started_at || ""
+    const effectiveStart = (sa && firstMinute && new Date(sa) < new Date(firstMinute))
+      ? sa : (firstMinute || sa)
     if (!live?.url || !effectiveStart) return
     const url = youtubeTimestampUrl(live.url, effectiveStart, minuteKey)
     if (url) window.open(url, "_blank", "noopener,noreferrer")

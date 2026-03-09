@@ -16,13 +16,10 @@ export function youtubeTimestampUrl(
   }
 
   const start = new Date(startedAt)
-  let offsetSec = Math.floor((target.getTime() - start.getTime()) / 1000)
+  const offsetSec = Math.floor((target.getTime() - start.getTime()) / 1000)
 
-  // Midnight crossing: if offset is negative, add 24h
-  if (offsetSec < 0) offsetSec += 86400
-
-  // Sem ajuste adicional: o erro natural de referência (primeiro minuto do chart
-  // vs. início real do stream no YouTube) já equivale a ~60s de offset.
+  // Offset negativo ou > 24h = referência errada (ex: started_at gravado no restart)
+  if (offsetSec < 0 || offsetSec > 86400) return null
 
   const sep = videoUrl.includes("?") ? "&" : "?"
   return `${videoUrl}${sep}t=${offsetSec}s`

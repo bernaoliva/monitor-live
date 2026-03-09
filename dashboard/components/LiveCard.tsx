@@ -243,7 +243,12 @@ export default function LiveCard({
   const [ytFeedback, setYtFeedback] = useState<string | null>(null)
 
   const handleMinuteClick = useCallback((minuteKey: string) => {
-    const effectiveStart = live.started_at || chartDataDisplay[0]?.minute || ""
+    const firstMinute = chartDataDisplay[0]?.minute || ""
+    const sa = live.started_at || ""
+    // started_at só é confiável se for anterior ao primeiro minuto do chart
+    // (evita usar horário de restart do monitor como referência)
+    const effectiveStart = (sa && firstMinute && new Date(sa) < new Date(firstMinute))
+      ? sa : (firstMinute || sa)
     if (!live.url || !effectiveStart) return
     const url = youtubeTimestampUrl(live.url, effectiveStart, minuteKey)
     if (url) {
