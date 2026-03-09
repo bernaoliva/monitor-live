@@ -218,6 +218,9 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
             "status":       status,
             "last_seen_at": now_iso(),
         }
+        if video_id not in _started_lives:
+            upd["started_at"] = now_iso()
+            _started_lives.add(video_id)
         if resolved_title:
             upd["title"] = resolved_title
             upd["title_history"] = fb_firestore.ArrayUnion([resolved_title])
@@ -346,6 +349,7 @@ def chat_ts_iso_brt(ts_raw_ms, ts_raw_str) -> Optional[str]:
 
 _rate_limited_until: float = 0.0  # epoch seconds; > time.time() → IP bloqueado pelo YouTube
 _title_cache: Dict[str, str] = {}
+_started_lives: Set[str] = set()  # lives que já tiveram started_at gravado
 
 def _is_good_title(video_id: str, title: Optional[str]) -> bool:
     t = (title or "").strip()
@@ -1533,6 +1537,7 @@ def _load_active_from_firestore(channel_display: str):
                     except Exception:
                         pass
                     active_videos[channel_display].add(d.id)
+                    _started_lives.add(d.id)  # não sobrescrever started_at no restart
                     _best_title(d.id, data.get("title"))
                     loaded.append(d.id)
 
