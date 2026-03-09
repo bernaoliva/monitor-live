@@ -21,6 +21,9 @@ export function youtubeTimestampUrl(
   // Offset negativo ou > 24h = referência errada (ex: started_at gravado no restart)
   if (offsetSec < 0 || offsetSec > 86400) return null
 
+  // t=0 numa live faz o YouTube ir pro live edge — usar mínimo de 1s
+  const t = Math.max(1, offsetSec)
+
   const sep = videoUrl.includes("?") ? "&" : "?"
-  return `${videoUrl}${sep}t=${offsetSec}s`
+  return `${videoUrl}${sep}t=${t}s`
 }
