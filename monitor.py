@@ -219,7 +219,7 @@ def fs_upsert_live(video_id: str, channel: str, title: str, url: str, status: st
             "last_seen_at": now_iso(),
         }
         if video_id not in _started_lives:
-            upd["started_at"] = now_iso()
+            upd["started_at"] = fetch_yt_actual_start(video_id) or now_iso()
             _started_lives.add(video_id)
         if resolved_title:
             upd["title"] = resolved_title
@@ -317,6 +317,26 @@ def stop_monitor(channel_display: str, video_id: str):
 # ─── UTILS ───────────────────────────────────────────────────────────────────
 def now_iso() -> str:
     return datetime.now(BR_TZ).isoformat(timespec="milliseconds")
+
+def fetch_yt_actual_start(video_id: str) -> Optional[str]:
+    """Retorna o actualStartTime da live via YouTube Data API (1 unit de quota)."""
+    if not YOUTUBE_API_KEY:
+        return None
+    try:
+        r = SESSION.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={"id": video_id, "part": "liveStreamingDetails", "key": YOUTUBE_API_KEY},
+            timeout=10,
+        )
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if items:
+            start = items[0].get("liveStreamingDetails", {}).get("actualStartTime")
+            if start:
+                return start  # ISO UTC, ex: "2026-03-09T11:00:00Z"
+    except Exception as e:
+        _log_debug(f"[fetch_yt_actual_start] {video_id}: {e}")
+    return None
 
 def chat_ts_iso_brt(ts_raw_ms, ts_raw_str) -> Optional[str]:
     """Normaliza timestamp do pytchat para ISO BRT consistente."""
@@ -1537,7 +1557,8 @@ def _load_active_from_firestore(channel_display: str):
                     except Exception:
                         pass
                     active_videos[channel_display].add(d.id)
-                    _started_lives.add(d.id)  # não sobrescrever started_at no restart
+                    if data.get("started_at"):
+                        _started_lives.add(d.id)  # só protege quem já tem started_at
                     _best_title(d.id, data.get("title"))
                     loaded.append(d.id)
 
