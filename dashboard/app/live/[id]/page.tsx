@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef, useMemo } from "react"
+import { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { doc, collection, onSnapshot, query, orderBy, where, limitToLast, updateDoc, increment } from "firebase/firestore"
@@ -11,6 +11,7 @@ import CommentFeed from "@/components/CommentFeed"
 import CommentsChart from "@/components/CommentsChart"
 import ExportButton from "@/components/ExportButton"
 import { ArrowLeft, ExternalLink, Clock } from "lucide-react"
+import { youtubeTimestampUrl } from "@/lib/timestamp-url"
 import { formatDistanceToNow, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -231,6 +232,13 @@ export default function LivePage() {
     [live?.concurrent_viewers, visibleTech, chartPoints],
   )
 
+  const handleMinuteClick = useCallback((minuteKey: string) => {
+    const effectiveStart = live?.started_at || chartPoints[0]?.minute || ""
+    if (!live?.url || !effectiveStart) return
+    const url = youtubeTimestampUrl(live.url, effectiveStart, minuteKey)
+    if (url) window.open(url, "_blank", "noopener,noreferrer")
+  }, [live?.url, live?.started_at, chartPoints])
+
   if (notFound) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center space-y-4 fade-up">
@@ -350,6 +358,7 @@ export default function LivePage() {
           <p className="metric-label mb-3">Volume por minuto</p>
           <CommentsChart
             data={chartData}
+            onMinuteClick={handleMinuteClick}
             segments={live?.title_changes && live.title_changes.length > 1 ? live.title_changes : undefined}
           />
         </div>

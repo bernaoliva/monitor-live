@@ -243,14 +243,15 @@ export default function LiveCard({
   const [ytFeedback, setYtFeedback] = useState<string | null>(null)
 
   const handleMinuteClick = useCallback((minuteKey: string) => {
-    if (!live.url || !live.started_at) return
-    const url = youtubeTimestampUrl(live.url, live.started_at, minuteKey)
+    const effectiveStart = live.started_at || chartDataDisplay[0]?.minute || ""
+    if (!live.url || !effectiveStart) return
+    const url = youtubeTimestampUrl(live.url, effectiveStart, minuteKey)
     if (url) {
       window.open(url, "_blank", "noopener,noreferrer")
       setYtFeedback(minuteKey.slice(-5))
       setTimeout(() => setYtFeedback(null), 2500)
     }
-  }, [live.url, live.started_at])
+  }, [live.url, live.started_at, chartDataDisplay])
 
   const categoryBreakdown = useMemo(() => {
     const acc: Record<string, number> = {}
