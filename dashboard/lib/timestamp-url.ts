@@ -21,8 +21,8 @@ export function youtubeTimestampUrl(
   // Midnight crossing: if offset is negative, add 24h
   if (offsetSec < 0) offsetSec += 86400
 
-  // Apply adjustment (e.g. -60s to compensate for chat delay)
-  offsetSec = Math.max(0, offsetSec - 60)
+  // Sem ajuste adicional: o erro natural de referência (primeiro minuto do chart
+  // vs. início real do stream no YouTube) já equivale a ~60s de offset.
 
   const sep = videoUrl.includes("?") ? "&" : "?"
   return `${videoUrl}${sep}t=${offsetSec}s`
