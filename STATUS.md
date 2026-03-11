@@ -1,6 +1,6 @@
 # Monitor de Lives — Status do Projeto
 
-> Ultima atualizacao: 2026-02-23
+> Ultima atualizacao: 2026-03-11
 
 ---
 
@@ -30,6 +30,35 @@
 | 2026-02-22 | Fix timezone BRT nos timestamps do chat; fix audiencia sem API key |
 | 2026-02-22 | Multiprocessing com fork no Linux (evita SemLock no segundo monitor) |
 | 2026-02-23 | Seletor de canal por logo no dashboard; logo do canal no LiveCard |
+| 2026-03-11 | **Pos-mortem live XVvu1RXPRcw**: fix URL duplicada GPU, retry API, keyword override resiliente, regex melhorados |
+
+---
+
+## Incidentes
+
+### 2026-03-08 — Live XVvu1RXPRcw (Palmeiras x Novorizontino) — recall 21%
+
+**Impacto**: De 52.001 comentarios, apenas 7 classificados como tecnicos. 26 comentarios tecnicos reais perdidos.
+
+**Causa raiz 1 — URL GPU duplicada (CRITICO)**:
+`SERVING_URL` na VM tinha `https://https://classificador-tecnico-...` porque o `sed` de deploy adicionou `https://` sobre placeholder que ja incluia o prefixo. Resultado: 19.226 chamadas GPU falharam com `NameResolutionError` durante o pico (300k-2.76M viewers, ~23:16-01:37 BRT).
+
+**Causa raiz 2 — keyword_override nao rodava com API falha**:
+O `_keyword_override` estava dentro do bloco `if res:` no `_process_batch`. Quando a API retornava None (falha de rede), o keyword fallback simplesmente nao executava. Comentarios como "sem audio", "travando" que deveriam ser pegos por regex foram perdidos.
+
+**Causa raiz 3 — regex muito rigidos**:
+Padroes como `audio\s+ruim` nao matchavam "audio ta ruim" (palavra no meio). "borrado" so matchava com "imagem borrad". "bugou" nao tinha padrao.
+
+**Correcoes aplicadas (2026-03-11)**:
+1. URL VM corrigida manualmente
+2. Placeholder mudou de `https://SUA_URL_CLOUD_RUN` para `SUA_URL_CLOUD_RUN` (previne duplicacao)
+3. Validacao de URL no startup (autocorrige `https://https://`)
+4. Retry simples (1 tentativa, 0.5s backoff) antes de desistir da API
+5. Log de warning quando batch perde resultados da API
+6. `_keyword_override` agora roda fora do `if res:` — funciona mesmo com API falha
+7. Regex: audio+qualidade permite ate 3 palavras no meio, "borrado" isolado, "bugou/bugando" adicionado
+
+**Resultado pos-fix**: 24/26 comentarios perdidos agora seriam capturados (92%). Os 2 restantes ("ta com delay", "esta com delay gol anulado") sao delay sem intensificador — risco alto de falso positivo em chat esportivo, modelo DistilBERT deve pegar esses.
 
 ---
 
@@ -37,7 +66,7 @@
 
 - [ ] **Feed "ultimas 3000 msgs"** (`/live/[id]`) — feed nao atualiza em tempo real apos fix do limitToLast. Investigar se o problema persiste com os novos timestamps ISO/BRT do monitor.
 - [ ] **Comentarios expandiveis no LiveCard** — 8 recentes expandidos + botao "+N anteriores" colapsados. Ver plano: `C:\Users\Admin\.claude\plans\cheerful-crafting-badger.md`
-- [ ] **Reduzir falsos positivos no keyword fallback** — `caiu`, `travand`, `placar` gerando classificacoes erradas. Ver plano: `C:\Users\Admin\.claude\plans\sorted-foraging-scott.md`
+- [x] ~~**Reduzir falsos positivos no keyword fallback**~~ — regex melhorados, keyword_override resiliente (2026-03-11)
 - [ ] Validar monitor ao vivo na proxima transmissao CazeTV/GETV
 
 ---
@@ -55,7 +84,7 @@ npx vercel alias <deployment-url> monitor-cazetv.vercel.app
 # 1. Garantir que SERVING_URL esta como placeholder no arquivo local antes do scp
 scp -i ~/.ssh/monitor_vm monitor.py USUARIO@IP_DA_VM:/home/monitor-cazetv/monitor/monitor.py
 # 2. Restaurar URL real na VM
-ssh -i ~/.ssh/monitor_vm USUARIO@IP_DA_VM "sed -i 's|SUA_URL_CLOUD_RUN|https://SUA_URL_CLOUD_RUN|' /home/monitor-cazetv/monitor/monitor.py"
+ssh -i ~/.ssh/monitor_vm USUARIO@IP_DA_VM "sed -i 's|SUA_URL_CLOUD_RUN|https://classificador-tecnico-559450313387.us-central1.run.app|' /home/monitor-cazetv/monitor/monitor.py"
 # 3. Reiniciar servico
 ssh -i ~/.ssh/monitor_vm USUARIO@IP_DA_VM "sudo systemctl restart monitor-cazetv.service"
 ```
