@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, useRef } from "react"
-import { collection, onSnapshot, getDocs, query, where } from "firebase/firestore"
+import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, TitleChange } from "@/lib/types"
 import HistoricoCard from "@/components/HistoricoCard"
@@ -17,6 +17,7 @@ function normCat(raw: string | null | undefined): string | null {
   const u = raw.toUpperCase().trim()
   if (/AUDIO|ÁUDIO|SOM\b|NARR/.test(u))              return "AUDIO"
   if (/VIDEO|VÍDEO|TELA|PIXEL|IMAG|CONGEL/.test(u))  return "VIDEO"
+  if (/SINC/.test(u))                                 return "SINC"
   if (/REDE|PLATAFORMA|BUFFER|CAIU|PLAT/.test(u))    return "REDE"
   if (/\bGC\b|PLACAR/.test(u))                       return "GC"
   return null
@@ -25,6 +26,7 @@ function normCat(raw: string | null | undefined): string | null {
 const CAT_COLOR: Record<string, string> = {
   AUDIO: "#60a5fa",
   VIDEO: "#c084fc",
+  SINC:  "#f472b6",
   REDE:  "#fb923c",
   GC:    "#22d3ee",
 }
@@ -72,15 +74,26 @@ export default function HistoricoPage() {
   const [dateTo,                setDateTo]               = useState("")
   const [searchQuery,           setSearchQuery]          = useState("")
 
-  // Cache de categorias por video_id (busca na subcoleção comments, igual HistoricoCard)
-  const catCacheRef       = useRef<Record<string, Record<string, number>>>({})
-  const autoSelectedRef   = useRef(false)
-  const prevChannelRef    = useRef<ChannelFilter>("all")
+  const autoSelectedRef = useRef(false)
+  const prevChannelRef  = useRef<ChannelFilter>("all")
+
+  const catCacheRef    = useRef<Record<string, Record<string, number>>>({})
   const [catCache,     setCatCache]     = useState<Record<string, Record<string, number>>>({})
   const [fetchingCats, setFetchingCats] = useState(false)
 
+  // Restaura cache do localStorage na montagem (lives encerradas não mudam)
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "lives"), (snap) => {
+    try {
+      const stored = localStorage.getItem("hcc-v3")
+      if (stored) {
+        catCacheRef.current = JSON.parse(stored)
+        setCatCache({ ...catCacheRef.current })
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    getDocs(collection(db, "lives")).then((snap) => {
       const data = snap.docs
         .map((doc) => {
           const d = doc.data()
@@ -109,7 +122,6 @@ export default function HistoricoPage() {
         })
       setLives(data)
     })
-    return () => unsub()
   }, [])
 
   // 1. Filtro por canal (OUTROS incluído — aparece na lista como bucket)
@@ -168,43 +180,44 @@ export default function HistoricoPage() {
     })
   }, [channelFiltered, selectedCompetitions, dateFrom, dateTo, searchQuery])
 
-  // 4. Busca categorias com concurrency limitada (max 10 paralelas)
+  // 4. Busca categorias para o pie — diferida 1s para não competir com o load dos cards
   useEffect(() => {
     const missing = fullyFiltered.filter((l) => !catCacheRef.current[l.video_id])
     if (missing.length === 0) return
 
     setFetchingCats(true)
     let cancelled = false
-    const CONCURRENCY = 10
     let idx = 0
 
-    async function worker() {
-      while (idx < missing.length && !cancelled) {
-        const i = idx++
-        const live = missing[i]
-        const snap = await getDocs(
-          query(collection(db, "lives", live.video_id, "comments"), where("is_technical", "==", true))
-        )
-        const cats: Record<string, number> = {}
-        snap.docs.forEach((d) => {
-          const cat = normCat(d.data().category as string | null)
-          if (cat) cats[cat] = (cats[cat] || 0) + 1
-        })
-        catCacheRef.current[live.video_id] = cats
-        if (i % 10 === 9 && !cancelled) setCatCache({ ...catCacheRef.current })
+    const run = async () => {
+      async function worker() {
+        while (idx < missing.length && !cancelled) {
+          const i = idx++
+          const live = missing[i]
+          const snap = await getDocs(
+            query(collection(db, "lives", live.video_id, "comments"), where("is_technical", "==", true))
+          )
+          const cats: Record<string, number> = { _total: snap.docs.length }
+          snap.docs.forEach((d) => {
+            const cat = normCat(d.data().category as string | null)
+            if (cat) cats[cat] = (cats[cat] || 0) + 1
+          })
+          catCacheRef.current[live.video_id] = cats
+        }
       }
-    }
-
-    Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, missing.length) }, () => worker())
-    ).then(() => {
+      // 3 workers em paralelo (baixo para não competir com cards visíveis)
+      await Promise.all(Array.from({ length: Math.min(3, missing.length) }, () => worker()))
       if (!cancelled) {
+        // Persiste no localStorage e atualiza UI de uma vez só (sem animação incremental)
+        try { localStorage.setItem("hcc-v3", JSON.stringify(catCacheRef.current)) } catch {}
         setCatCache({ ...catCacheRef.current })
         setFetchingCats(false)
       }
-    })
+    }
 
-    return () => { cancelled = true }
+    // Adia 1s para o load inicial dos cards ter prioridade
+    const timer = setTimeout(run, 1000)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [fullyFiltered])
 
   // 5. Agrega categorias do cache para o pie
@@ -217,7 +230,7 @@ export default function HistoricoPage() {
       })
     })
     return Object.entries(acc)
-      .filter(([, v]) => v > 0)
+      .filter(([k, v]) => k !== "_total" && v > 0)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
   }, [fullyFiltered, catCache])
@@ -244,10 +257,14 @@ export default function HistoricoPage() {
     })
     const totalHours = Math.round(totalHoursMs / 3600000 * 10) / 10
     const msgs     = fullyFiltered.reduce((s, l) => s + l.total_comments, 0)
-    const problems = fullyFiltered.reduce((s, l) => s + l.technical_comments, 0)
+    // Usa contagem real dos docs quando disponível no cache (evita drift do contador)
+    const problems = fullyFiltered.reduce((s, l) => {
+      const cached = catCache[l.video_id]
+      return s + (cached ? (cached._total ?? l.technical_comments) : l.technical_comments)
+    }, 0)
     const rate     = msgs > 0 ? Math.round((problems / msgs) * 100) : 0
     return { count: fullyFiltered.length, msgs, problems, rate, totalHours }
-  }, [fullyFiltered])
+  }, [fullyFiltered, catCache])
 
   function toggleCompetition(name: string) {
     setSelectedCompetitions((prev) => {
@@ -415,7 +432,7 @@ export default function HistoricoPage() {
               Categorias de problemas
             </p>
 
-            {fetchingCats ? (
+            {fetchingCats && pieData.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-white/20 text-[11px] font-mono">
                 carregando...
               </div>

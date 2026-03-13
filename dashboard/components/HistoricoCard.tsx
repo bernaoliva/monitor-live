@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useRef } from "react"
 import Link from "next/link"
-import { collection, onSnapshot, query, where, getDocs } from "firebase/firestore"
+import { collection, query, where, getDocs } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import CommentsChart from "@/components/CommentsChart"
@@ -30,6 +30,7 @@ function normalizeCategory(raw: string | null | undefined): string | null {
   const u = raw.toUpperCase().trim()
   if (/AUDIO|ÁUDIO|SOM\b|NARR/.test(u)) return "AUDIO"
   if (/VIDEO|VÍDEO|TELA|PIXEL|IMAG|CONGEL/.test(u)) return "VIDEO"
+  if (/SINC/.test(u)) return "SINC"
   if (/REDE|PLATAFORMA|BUFFER|CAIU|PLAT/.test(u)) return "REDE"
   if (/\bGC\b|PLACAR/.test(u)) return "GC"
   return u
@@ -38,6 +39,7 @@ function normalizeCategory(raw: string | null | undefined): string | null {
 const CAT_STYLE: Record<string, { bg: string; text: string; border: string; barColor: string }> = {
   AUDIO: { bg: "bg-blue-500/10",   text: "text-blue-300",   border: "border-blue-500/20",   barColor: "#60a5fa" },
   VIDEO: { bg: "bg-purple-500/10", text: "text-purple-300", border: "border-purple-500/20", barColor: "#c084fc" },
+  SINC:  { bg: "bg-pink-500/10",   text: "text-pink-300",   border: "border-pink-500/20",   barColor: "#f472b6" },
   REDE:  { bg: "bg-orange-500/10", text: "text-orange-300", border: "border-orange-500/20", barColor: "#fb923c" },
   GC:    { bg: "bg-cyan-500/10",   text: "text-cyan-300",   border: "border-cyan-500/20",   barColor: "#22d3ee" },
 }
@@ -59,8 +61,23 @@ export default function HistoricoCard({ live }: { live: Live }) {
   const [peakViewers, setPeakViewers]   = useState<number | null>(null)
   const [avgViewers,  setAvgViewers]    = useState<number | null>(null)
   const [minutePoints, setMinutePoints] = useState<ChartPoint[]>([])
+  const cardRef  = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+
+  // Lazy load: only fetch data when card enters viewport
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); observer.disconnect() } },
+      { rootMargin: "300px" }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
+    if (!visible) return
     getDocs(collection(db, "lives", live.video_id, "minutes")).then((snap) => {
       const vals = snap.docs
         .map((d) => d.data().viewers as number | undefined)
@@ -78,14 +95,13 @@ export default function HistoricoCard({ live }: { live: Live }) {
         .sort((a, b) => a.minute.localeCompare(b.minute))
       setMinutePoints(pts)
     })
-  }, [live.video_id])
+  }, [visible, live.video_id])
 
   useEffect(() => {
-    const q = query(
-      collection(db, "lives", live.video_id, "comments"),
-      where("is_technical", "==", true)
-    )
-    const unsub = onSnapshot(q, (snap) => {
+    if (!visible) return
+    getDocs(
+      query(collection(db, "lives", live.video_id, "comments"), where("is_technical", "==", true))
+    ).then((snap) => {
       setTechComments(
         snap.docs.map((d) => {
           const raw = d.data()
@@ -102,8 +118,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
         })
       )
     })
-    return () => unsub()
-  }, [live.video_id])
+  }, [visible, live.video_id])
 
   // Usa minutePoints (subcoleção minutes/) quando disponível — mesma fonte que live/[id]
   // Fallback para buildChartData enquanto os docs ainda não carregaram
@@ -170,7 +185,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
     healthScore.score >= 50 ? "accent-bar-amber" : "accent-bar-red"
 
   return (
-    <div className={`panel overflow-hidden ${accentClass}`}>
+    <div ref={cardRef} className={`panel overflow-hidden ${accentClass}`}>
       {/* Header */}
       <div className="flex items-start justify-between px-4 pt-4 pb-3">
         <div className="min-w-0 flex-1 space-y-1">
