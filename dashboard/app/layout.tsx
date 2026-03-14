@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import Image from "next/image"
 import "./globals.css"
 import TabNav from "@/components/TabNav"
 import { ChannelProvider } from "@/lib/channel-context"
@@ -22,22 +23,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <ChannelProvider>
             <CardLayoutProvider>
               <CollapsibleHeader>
-                <div className="max-w-[1920px] mx-auto px-5 h-12 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {/* Red rec dot */}
-                    <div className="flex items-center gap-2">
-                      <div className="relative w-2 h-2">
-                        <div className="absolute inset-0 rounded-full bg-red-500 pulse-dot" />
-                        <div className="absolute inset-0 rounded-full bg-red-500" />
-                      </div>
-                      <span className="font-bold text-[13px] text-white tracking-tight">MONITOR</span>
-                    </div>
-                    <div className="w-px h-5 bg-white/[0.06]" />
+                <div className="max-w-[1920px] mx-auto px-5 h-12 flex items-center">
+                  <div className="flex items-center gap-3 flex-1">
                     <ChannelSelector />
                     <div className="w-px h-5 bg-white/[0.06]" />
                     <TabNav />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <Image src="/cria-logo.png" alt="C.R.I.A" width={120} height={42} className="object-contain" priority />
+                  <div className="flex items-center justify-end flex-1">
                     <span className="font-mono text-[10px] text-white/15 tracking-wider">v2.0</span>
                   </div>
                 </div>

@@ -42,6 +42,7 @@ dashboard/add-test-lives.mjs
 __*.py
 __*.json
 *.png
+!dashboard/public/cria-logo.png
 
 # === DEBUG ===
 debug_html/
