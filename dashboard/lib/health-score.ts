@@ -35,15 +35,19 @@ export function computeHealthScore(
   const avgProblemViewers = techWithViewers > 0
     ? viewerWeightedSum / techWithViewers
     : fallbackViewers
-  // ~100k → 1.0 | ~1M → 0.83 | ~1k → 1.67 | ~500 → 1.85
+  // ~100k → 0.80 | ~500k → 0.70 | ~1M → 0.67 | ~1k → 1.33 | ~500 → 1.48
   const audienceFactor = Math.min(Math.max(
-    5 / Math.log10(Math.max(avgProblemViewers, 100)),
-    0.6,
+    4 / Math.log10(Math.max(avgProblemViewers, 100)),
+    0.4,
   ), 2.0)
 
-  // 1. Count penalty: ajustado pelo fator de audiência
+  // 1. Count penalty: taxa por minuto ajustada pela audiência
+  //    Rate-based: concentrados pesam mais. Floor absoluto: 16 problemas ≠ 0.
   const effectiveTech = techCount * audienceFactor
-  const countPenalty = Math.min(effectiveTech * 0.9, 45)
+  const techRate = effectiveTech / Math.max(n, 1)
+  const rateBasedPenalty = Math.sqrt(techRate) * 20
+  const absoluteFloor = effectiveTech * 0.75
+  const countPenalty = Math.min(Math.max(rateBasedPenalty, absoluteFloor), 45)
 
   // 2. Rate penalty: curva sqrt na taxa % (já normaliza por volume de msgs)
   const ratePenalty = Math.min(Math.sqrt(ratePercent) * 11, 60)
@@ -70,14 +74,12 @@ export function computeHealthScore(
   const highCount = comments.filter((c) => c.severity === "high").length
   const severityPenalty = Math.min(highCount * 0.8, 8)
 
-  // 5. Recovery: minutos limpos após último problema → bônus
-  //    Dois modos: fração (bom para lives curtas) e absoluto com sqrt
-  //    (bom para lives longas onde a fração dilui). Usa o maior dos dois.
-  let lastProblemIdx = -1
+  // 5. Recovery: minutos limpos desde o último com qualquer problema técnico
+  let lastTechIdx = -1
   for (let i = n - 1; i >= 0; i--) {
-    if (sorted[i].technical > 0) { lastProblemIdx = i; break }
+    if (sorted[i].technical > 0) { lastTechIdx = i; break }
   }
-  const cleanMinutes = lastProblemIdx >= 0 ? n - 1 - lastProblemIdx : n
+  const cleanMinutes = lastTechIdx >= 0 ? n - 1 - lastTechIdx : n
   const fractionRecovery = (cleanMinutes / Math.max(n, 1)) * 15
   const absoluteRecovery = Math.sqrt(cleanMinutes) * 0.8
   const recoveryBonus = Math.min(Math.max(fractionRecovery, absoluteRecovery), 14)
