@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { useAuth } from "@/lib/auth-context"
 
 export default function LoginScreen() {
@@ -8,17 +9,15 @@ export default function LoginScreen() {
   return (
     <div className="min-h-screen bg-bg noise-bg flex flex-col items-center justify-center">
       <div className="w-full max-w-sm px-6 space-y-8">
-        {/* Logo */}
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="relative w-2.5 h-2.5">
-              <div className="absolute inset-0 rounded-full bg-red-500 pulse-dot" />
-              <div className="absolute inset-0 rounded-full bg-red-500" />
-            </div>
-            <span className="font-bold text-base text-white tracking-tight">MONITOR</span>
+        {/* Logos */}
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex items-center justify-center gap-6 w-full translate-x-[18px]">
+            <Image src="/cazetv-logo-branco.png" alt="CazéTV" width={90} height={32} className="object-contain shrink-0" priority />
+            <div className="w-px h-10 bg-white/15 shrink-0" />
+            <Image src="/cria-logo.png" alt="C.R.I.A" width={150} height={52} className="object-contain shrink-0 -ml-9 translate-y-1" priority />
           </div>
-          <p className="text-[11px] text-white/25 font-mono tracking-wider text-center">
-            Monitor de Lives · CazeTV + GETV
+          <p className="text-[15px] text-white/50 tracking-wider text-center whitespace-nowrap">
+            <span className="font-bold text-white/70">C</span>hats em <span className="font-bold text-white/70">R</span>evisão por <span className="font-bold text-white/70">I</span>nteligência <span className="font-bold text-white/70">A</span>rtificial
           </p>
         </div>
 
