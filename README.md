@@ -1,6 +1,6 @@
-# Monitor de Lives — YouTube
+# CRIA - Chats em Revisão por Inteligência Artificial
 
-Sistema de monitoramento de transmissões ao vivo do YouTube que coleta comentários do chat em tempo real e usa IA para detectar problemas técnicos relatados pelos espectadores.
+Monitor de lives do YouTube dos canais **CazéTV** e **GETV** que coleta comentários do chat em tempo real e usa IA para detectar problemas técnicos relatados pelos espectadores.
 
 Projetado para canais de grande audiência (500k+ espectadores simultâneos).
 
@@ -8,32 +8,76 @@ Projetado para canais de grande audiência (500k+ espectadores simultâneos).
 
 Analisa milhares de comentários por minuto e classifica automaticamente reclamações técnicas — sem áudio, tela preta, travando, buffering, delay, placar sumiu — exibindo tudo em um dashboard em tempo real para a equipe de operações agir rápido.
 
-## Arquitetura
+## Topologia
 
 ```
-YouTube Chat → Coletor Python → Pré-filtro → DistilBERT (GPU) → Guard → Firestore → Dashboard
+┌───────────────────────────────────────────┐
+│            YOUTUBE LIVE CHAT               │
+│            CazéTV + GETV                   │
+└─────────────────┬─────────────────────────┘
+                  │ pytchat (1 thread por live)
+                  │ coleta mensagens do chat
+                  ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                          VM LOCAL (192.168.99.111)                                │
+│                          monitor.py (systemd service)                             │
+│                                                                                   │
+│  ┌────────────────────┐  batch 64 msgs   ┌──────────────────────────────────┐    │
+│  │ COLETA              │  ou 100ms        │ AUDIÊNCIA (1x/min por live)      │    │
+│  │                     │────────────────▶│ YouTube Data API v3 + InnerTube  │    │
+│  │ 1 thread por live   │                  │                                  │    │
+│  │ dedup 5000 msgs     │                  │ decide rota de classificação     │    │
+│  └────────────────────┘                  └──────────┬──────────┬────────────┘    │
+│                                            < 300k    │          │  >= 300k        │
+│                                                      ▼          ▼                  │
+│                                           ┌────────────┐  ┌──────────────┐        │
+│                                           │ CPU LOCAL   │  │ CLOUD RUN    │        │
+│                                           │ :8080       │  │ GPU (T4)     │        │
+│                                           │             │  │ us-central1  │        │
+│                                           │ DistilBERT  │  │ DistilBERT   │        │
+│                                           │ fine-tuned  │  │ fine-tuned   │        │
+│                                           │ linguagem   │  │ linguagem    │        │
+│                                           │ de chat     │  │ de chat      │        │
+│                                           │ timeout 4s  │  │ timeout 15s  │        │
+│                                           │ fallback ──▶│  │ $0.90/2h     │        │
+│                                           └──────┬─────┘  └──────┬───────┘        │
+│                                                  └───────┬───────┘                │
+└─────────────────────────────────────────────────────────┼────────────────────────┘
+                                                          │ WriteBatch (400 ops)
+                                                          │ comentários classificados
+                                                          │ + contadores (flush 3s)
+                                                          ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          FIRESTORE (youtube-monitor-474920)                     │
+│                                                                                 │
+│  /lives/{video_id}                                                              │
+│    ├── status, title, viewers, counters, issue_counts                           │
+│    ├── 📁 comments/{hash}  →  author, text, ts, category, severity             │
+│    └── 📁 minutes/{YYYY-MM-DDTHH:mm}  →  total, technical, viewers             │
+└────────────────┬────────────────────────────────────────────┬───────────────────┘
+                 │ onSnapshot (WebSocket)                     │ export comentários
+                 │ updates em tempo real                      │ rotulados + dismisses
+                 ▼                                            ▼
+┌───────────────────────────────────────────┐  ┌──────────────────────────────────┐
+│            VERCEL (CDN)                    │  │  RETREINO (futuro)               │
+│                                            │  │                                  │
+│  Next.js 16 + Tailwind + Recharts          │  │  Vertex AI / local               │
+│  SSR + Static, Edge Network                │  │                                  │
+│                                            │  │  • Comentários técnicos +        │
+│  /              AO VIVO (grid de lives)    │  │    dismissed = dataset            │
+│  /historico     Lives encerradas           │  │    supervisionado                 │
+│  /live/[id]     Detalhe + feed completo    │  │  • Fine-tune DistilBERT           │
+│                                            │  │    linguagem de chat              │
+│  Auth: Firebase Auth (Google provider)     │  │  • Deploy novo modelo             │
+└─────────────────┬─────────────────────────┘  │    no Cloud Run / CPU             │
+                  │ HTTPS                       └──────────────────────────────────┘
+                  ▼
+┌───────────────────────────────────────────┐
+│               USUÁRIOS                     │
+│       monitor-cazetv.vercel.app            │
+│       Login: Google SSO (@livemode.com)    │
+└───────────────────────────────────────────┘
 ```
-
-- **Coletor**: captura mensagens do chat via pytchat, envia em batches para classificação
-- **IA**: DistilBERT multilingual fine-tuned (F1 = 0.93) servido em Cloud Run GPU
-- **3 camadas de classificação**: pré-filtro regex → modelo de IA → guard de keywords
-- **Dashboard**: Next.js com dados em tempo real via Firestore `onSnapshot`
-
-### Alto volume
-
-Pipeline assíncrono que aguenta ~500 msgs/s:
-
-```
-chat → pré-filtro (descarta ~80%) → batch queue (64 items / 100ms)
-  → 1 request HTTP para N textos → Firestore WriteBatch
-  → contadores em memória → flush a cada 3s
-```
-
-## Dashboard
-
-- **AO VIVO** — cards por stream com feed de problemas, gráfico de volume por minuto, breakdown por categoria (Áudio, Vídeo, Rede, GC), alerta sonoro, dismiss de falsos positivos
-- **HISTÓRICO** — lives encerradas com métricas e gráfico final
-- **Detalhe** — feed completo com filtros, exportação
 
 ## Stack
 
@@ -41,11 +85,28 @@ chat → pré-filtro (descarta ~80%) → batch queue (64 items / 100ms)
 |---|---|
 | Coletor de chat | Python, pytchat, threading |
 | Classificação | DistilBERT multilingual fine-tuned |
-| Inferência | Cloud Run GPU (T4) + fallback CPU local |
+| Inferência GPU | Cloud Run (NVIDIA T4, scale-to-zero) |
+| Inferência CPU | Local na VM (porta 8080) |
 | Treino | Vertex AI (A100 80GB) |
 | Banco de dados | Firebase Firestore |
 | Dashboard | Next.js 16, Tailwind CSS, Recharts |
 | Hosting | Vercel |
+| Auth | Google SSO (@livemode.com) |
+
+## Métricas do modelo
+
+| Métrica | Valor |
+|---|---|
+| F1-Score | 0.933 |
+| Precision | 0.911 |
+| Recall | 0.957 |
+| Dataset | 3k exemplos (70/30) |
+
+## Dashboard
+
+- **AO VIVO** — cards por stream com feed de problemas, gráfico de volume por minuto, breakdown por categoria (Áudio, Vídeo, Rede, GC), alerta sonoro, dismiss de falsos positivos
+- **HISTÓRICO** — lives encerradas com métricas e gráfico final
+- **Detalhe** — feed completo com filtros, exportação
 
 ## Estrutura
 
@@ -54,7 +115,7 @@ chat → pré-filtro (descarta ~80%) → batch queue (64 items / 100ms)
 ├── dashboard/                  # Frontend Next.js
 │   ├── app/                    # Rotas (/, /historico, /live/[id])
 │   ├── components/             # LiveCard, CommentsChart, etc.
-│   └── lib/                    # Firebase config, tipos
+│   └── lib/                    # Firebase config, tipos, health-score
 ├── serving/                    # Serviço de inferência (Cloud Run)
 │   ├── app.py                  # FastAPI + DistilBERT
 │   └── Dockerfile
@@ -69,15 +130,6 @@ chat → pré-filtro (descarta ~80%) → batch queue (64 items / 100ms)
 └── download_model.py           # Baixa modelo do GCS
 ```
 
-## Métricas do modelo
-
-| Métrica | Valor |
-|---|---|
-| F1-Score | 0.933 |
-| Precision | 0.911 |
-| Recall | 0.957 |
-| Dataset | 3k exemplos (70/30) |
-
 ## Licença
 
-Uso pessoal.
+Uso interno — CazéTV / LiveMode.
