@@ -10,8 +10,16 @@ import AuthGate from "@/components/AuthGate"
 import CollapsibleHeader from "@/components/CollapsibleHeader"
 
 export const metadata: Metadata = {
-  title: "Monitor de Lives - CazeTV",
-  description: "Dashboard de monitoramento de comentarios em tempo real",
+  title: "CRIA - Monitor de Lives",
+  description: "Chats em Revisão por Inteligência Artificial",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -29,10 +37,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <div className="w-px h-5 bg-white/[0.06]" />
                     <TabNav />
                   </div>
-                  <Image src="/cria-logo.png" alt="C.R.I.A" width={120} height={42} className="object-contain" priority />
-                  <div className="flex items-center justify-end flex-1">
-                    <span className="font-mono text-[10px] text-white/15 tracking-wider">v2.0</span>
-                  </div>
+                  <Image src="/cria-logo.png" alt="C.R.I.A" width={114} height={40} className="object-contain" priority />
+                  <div className="flex-1" />
                 </div>
               </CollapsibleHeader>
 
