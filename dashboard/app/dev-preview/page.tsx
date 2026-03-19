@@ -299,10 +299,10 @@ function MockCard({
             {chartHeight >= 90 && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`/img/score/score-${score.level === "OK" ? "ok" : score.level === "ATENÇÃO" ? "atencao" : score.level === "ALERTA" ? "alerta" : "critico"}.png`}
+                src={`/img/score/${channelKey === "GETV" ? "getv" : "score"}-${score.level === "OK" ? "ok" : score.level === "ATENÇÃO" ? "atencao" : score.level === "ALERTA" ? "alerta" : "critico"}.png`}
                 alt={score.level}
-                width={32}
-                height={32}
+                width={channelKey === "GETV" ? 48 : 32}
+                height={channelKey === "GETV" ? 48 : 32}
                 style={{ objectFit: "contain", filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.8))" }}
               />
             )}

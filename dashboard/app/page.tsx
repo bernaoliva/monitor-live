@@ -224,7 +224,7 @@ export default function HomePage() {
         <div className="flex items-center gap-3 flex-wrap">
           <Activity size={16} className="text-white/20" />
           <div>
-            <h1 className="text-sm font-bold text-white">Painel de Controle</h1>
+            <h1 className="text-sm font-bold text-white">Chats em Revisão por IA</h1>
             <p className="text-[11px] text-white/20 font-mono">
               {active.length > 0
                 ? `${active.length} stream${active.length > 1 ? "s" : ""} ao vivo`
@@ -326,7 +326,7 @@ export default function HomePage() {
                 ? `Nenhum stream ativo em ${selectedList[0]}`
                 : "Nenhum stream ativo nos canais selecionados"}
           </p>
-          <p className="text-white/12 text-[11px] mt-1 font-mono">O monitor detectara automaticamente</p>
+          <p className="text-white/12 text-[11px] mt-1 font-mono">O monitor detectará automaticamente</p>
         </div>
       )}
     </div>
