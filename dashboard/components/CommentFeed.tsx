@@ -54,10 +54,12 @@ export default function CommentFeed({
       {comments.map((c) => {
         const catKey   = normalizeCategory(c.category)
         const catStyle = catKey ? (CAT_STYLE[catKey] ?? null) : null
+        const isSynthetic = !!c.synthetic
         return (
           <div
             key={c.id}
             className={`px-5 py-3 flex gap-3 transition-colors border-l-2 group ${
+              isSynthetic ? "border-cyan-500/40 bg-cyan-500/[0.04]" :
               c.is_technical ? (SEVERITY_STYLES[c.severity] ?? SEVERITY_STYLES.none) : "border-transparent"
             }`}
           >
@@ -67,6 +69,7 @@ export default function CommentFeed({
                 <AlertTriangle
                   size={14}
                   className={
+                    isSynthetic ? "text-cyan-400" :
                     c.severity === "high"   ? "text-red-400" :
                     c.severity === "medium" ? "text-orange-400" : "text-yellow-400"
                   }
@@ -77,29 +80,34 @@ export default function CommentFeed({
             {/* Conteúdo */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                <span className="text-xs font-semibold text-white/55 truncate max-w-[140px]">
+                <span className={`text-xs font-semibold truncate max-w-[140px] ${isSynthetic ? "text-cyan-300/70" : "text-white/55"}`}>
                   {c.author}
                 </span>
                 <span className="text-[10px] text-white/30 font-mono shrink-0">
                   {format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}
                 </span>
-                {c.is_technical && c.severity && c.severity !== "none" && (
+                {c.is_technical && c.severity && c.severity !== "none" && !isSynthetic && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${SEVERITY_BADGE[c.severity] ?? ""}`}>
                     {c.severity.toUpperCase()}
                   </span>
                 )}
-                {c.is_technical && catKey && (
+                {isSynthetic && (
+                  <span className="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded border bg-cyan-500/10 border-cyan-500/25 text-cyan-300">
+                    SURGE DE F
+                  </span>
+                )}
+                {c.is_technical && catKey && !isSynthetic && (
                   <span className={`text-[9px] font-bold font-mono px-1.5 py-0.5 rounded border ${catStyle?.bg ?? "bg-white/[0.04] border-white/[0.06]"} ${catStyle?.text ?? "text-white/40"}`}>
                     {catKey}
                   </span>
                 )}
               </div>
 
-              <p className={`text-sm leading-relaxed ${c.is_technical ? "text-white/85" : "text-white/50"}`}>
+              <p className={`text-sm leading-relaxed ${isSynthetic ? "text-cyan-100/80" : c.is_technical ? "text-white/85" : "text-white/50"}`}>
                 {c.text}
               </p>
 
-              {c.is_technical && c.issue && (
+              {c.is_technical && c.issue && !isSynthetic && (
                 <span className="inline-block mt-1 text-[9px] text-white/35 font-mono">
                   {c.issue}
                 </span>

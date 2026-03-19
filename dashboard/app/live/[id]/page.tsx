@@ -139,6 +139,7 @@ export default function LivePage() {
           category:     raw.category     ?? null,
           issue:        raw.issue        ?? null,
           severity:     raw.severity     ?? "none",
+          synthetic:    raw.synthetic    ?? undefined,
         } satisfies Comment
       }).reverse() // docs chegam em asc; reverter para mostrar mais recente primeiro
       allComments.current = data
@@ -154,7 +155,7 @@ export default function LivePage() {
             .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))
             .map((d) => {
               const raw = d.data()
-              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined } satisfies ChartPoint
+              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined, f_count: raw.f_count ?? 0 } satisfies ChartPoint
             })
             .sort((a, b) => a.minute.localeCompare(b.minute))
         )
@@ -179,6 +180,7 @@ export default function LivePage() {
           category:     raw.category     ?? null,
           issue:        raw.issue        ?? null,
           severity:     raw.severity     ?? "none",
+          synthetic:    raw.synthetic    ?? undefined,
         } satisfies Comment
       }).sort((a, b) => a.ts.localeCompare(b.ts))
       setTechComments(data)

@@ -179,7 +179,7 @@ export default function LiveCard({
             .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))
             .map((d) => {
               const raw = d.data()
-              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined } satisfies ChartPoint
+              return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined, f_count: raw.f_count ?? 0 } satisfies ChartPoint
             })
             .sort((a, b) => a.minute.localeCompare(b.minute))
         )
@@ -201,6 +201,7 @@ export default function LiveCard({
               id: d.id, author: raw.author ?? "", text: raw.text ?? "", ts: raw.ts ?? "",
               is_technical: raw.is_technical ?? false, category: raw.category ?? null,
               issue: raw.issue ?? null, severity: raw.severity ?? "none",
+              synthetic: raw.synthetic ?? undefined,
             } satisfies Comment
           })
         )
@@ -227,7 +228,7 @@ export default function LiveCard({
       techByMinute[mk] = (techByMinute[mk] ?? 0) + 1
     }
     return chartData
-      .map((p) => ({ ...p, technical: techByMinute[p.minute] ?? 0 }))
+      .map((p) => ({ ...p, technical: (techByMinute[p.minute] ?? 0) + (p.f_count ?? 0) }))
       .sort((a, b) => a.minute.localeCompare(b.minute))
   }, [chartData, visibleComments])
 
@@ -268,6 +269,13 @@ export default function LiveCard({
   }, [visibleComments])
 
   const categoryTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
+
+  // Total de problemas: comentários visíveis + F's dos surges (que não são comentários individuais)
+  const totalFFromSurges = useMemo(() =>
+    chartData.reduce((sum, p) => sum + (p.f_count ?? 0), 0),
+    [chartData]
+  )
+  const totalProblems = visibleComments.length + totalFFromSurges
 
   const techRate = Math.round((visibleComments.length / Math.max(live.total_comments, 1)) * 100)
 
@@ -352,7 +360,7 @@ export default function LiveCard({
                 </span>
               )}
               <span className={`${ultraDense ? "text-[9px]" : denseHeader ? "text-[10px]" : "text-[12px]"} font-mono text-red-400/80`}>
-                {visibleComments.length} prob.
+                {totalProblems} prob.
               </span>
             </div>
           </div>
@@ -406,7 +414,7 @@ export default function LiveCard({
               <span className="font-bold">{ytFeedback}</span>
             </div>
           )}
-          <div className="absolute -top-2 left-0 z-10 pointer-events-none flex items-center leading-none" style={{ gap: 2, transform: liveCount >= 4 ? "scale(0.95)" : undefined, transformOrigin: "top left" }}>
+          <div className="absolute -top-2 left-0 z-10 pointer-events-none flex items-center leading-none" style={{ gap: channelKey === "GETV" ? 0 : 2, transform: liveCount >= 4 ? "scale(0.95)" : undefined, transformOrigin: "top left" }}>
             <div className="flex flex-col items-center" style={{ gap: 2 }}>
               {chartHeight >= 90 ? (
                 <>
@@ -429,10 +437,10 @@ export default function LiveCard({
             {chartHeight >= 90 && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`/img/score/score-${healthScore.level === "OK" ? "ok" : healthScore.level === "ATENÇÃO" ? "atencao" : healthScore.level === "ALERTA" ? "alerta" : "critico"}.png`}
+                src={`/img/score/${channelKey === "GETV" ? "getv" : "score"}-${healthScore.level === "OK" ? "ok" : healthScore.level === "ATENÇÃO" ? "atencao" : healthScore.level === "ALERTA" ? "alerta" : "critico"}.png`}
                 alt={healthScore.level}
-                width={32}
-                height={32}
+                width={channelKey === "GETV" ? 48 : 32}
+                height={channelKey === "GETV" ? 48 : 32}
                 style={{ objectFit: "contain", filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.8))" }}
               />
             )}
@@ -462,7 +470,7 @@ export default function LiveCard({
           <div className="px-3 py-1.5 flex items-center gap-1.5 border-b border-white/[0.04] shrink-0">
             <AlertTriangle size={8} className="text-red-400/60 shrink-0" />
             <span className="text-[8px] font-bold font-mono uppercase tracking-wider text-white/40">Problemas recentes</span>
-            <span className="font-data text-[9px] text-white/25 ml-auto">{visibleComments.length}</span>
+            <span className="font-data text-[9px] text-white/25 ml-auto">{totalProblems}</span>
           </div>
           {dismissError && (
             <div className="px-3 py-1 text-[9px] text-red-400/70 font-mono bg-red-500/5 border-b border-red-500/10 shrink-0">
@@ -478,18 +486,19 @@ export default function LiveCard({
               visibleComments.map((c) => {
                 const catKey  = normalizeCategory(c.category) ?? ""
                 const catStyle = CAT_STYLE[catKey] ?? CAT_DEFAULT
+                const isSynthetic = !!c.synthetic
                 return (
                   <div
                     key={c.id}
-                    className={`relative group flex items-center gap-2 px-3 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors ${ultraDense ? "h-7" : "h-9"}`}
+                    className={`relative group flex items-center gap-2 px-3 border-b last:border-0 hover:bg-white/[0.02] transition-colors ${ultraDense ? "h-7" : "h-9"} ${isSynthetic ? "border-cyan-500/20 bg-cyan-500/[0.04]" : "border-white/[0.03]"}`}
                   >
-                    <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${catStyle.leftBar}`} />
-                    <span className={`block ${ultraDense ? "w-1 h-1" : "w-1.5 h-1.5"} rounded-full shrink-0 ${SEV_DOT[c.severity] ?? SEV_DOT.none}`} />
+                    <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${isSynthetic ? "bg-cyan-400/60" : catStyle.leftBar}`} />
+                    <span className={`block ${ultraDense ? "w-1 h-1" : "w-1.5 h-1.5"} rounded-full shrink-0 ${isSynthetic ? "bg-cyan-400" : (SEV_DOT[c.severity] ?? SEV_DOT.none)}`} />
                     <div className="flex-1 min-w-0">
-                      <span className={`${ultraDense ? "text-[11px]" : "text-sm"} text-white/70 line-clamp-2 leading-tight`}>{c.text} <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} text-white/30 font-mono`}>— {c.author}</span></span>
+                      <span className={`${ultraDense ? "text-[11px]" : "text-sm"} ${isSynthetic ? "text-cyan-200/80" : "text-white/70"} line-clamp-2 leading-tight`}>{c.text} <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} ${isSynthetic ? "text-cyan-400/50" : "text-white/30"} font-mono`}>— {c.author}</span></span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      {catKey && <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} font-bold font-mono ${catStyle.text}`}>{catKey}</span>}
+                      {catKey && <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} font-bold font-mono ${isSynthetic ? "text-cyan-400/70" : catStyle.text}`}>{catKey}</span>}
                       <span className={`${ultraDense ? "text-[8px]" : "text-[10px]"} text-white/50 font-mono`}>{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
                     </div>
                     <button

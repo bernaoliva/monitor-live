@@ -33,6 +33,7 @@ export interface Comment {
   category: string | null
   issue: string | null
   severity: Severity
+  synthetic?: boolean
 }
 
 export interface ChartPoint {
@@ -40,4 +41,5 @@ export interface ChartPoint {
   total: number
   technical: number
   viewers?: number
+  f_count?: number
 }
