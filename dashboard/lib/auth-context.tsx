@@ -9,9 +9,12 @@ import { app } from "@/lib/firebase"
 
 const auth = getAuth(app)
 
+const ADMIN_EMAILS = ["boliva@livemode.com", "jcrispim@livemode.com"]
+
 interface AuthCtx {
   user: User | null
   loading: boolean
+  isAdmin: boolean
   error: string | null
   signInWithGoogle: () => Promise<void>
   logout: () => Promise<void>
@@ -53,8 +56,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => signOut(auth)
 
+  const isAdmin = user ? ADMIN_EMAILS.includes(user.email ?? "") : false
+
   return (
-    <AuthContext.Provider value={{ user, loading, error, signInWithGoogle, logout }}>
+    <AuthContext.Provider value={{ user, loading, isAdmin, error, signInWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   )

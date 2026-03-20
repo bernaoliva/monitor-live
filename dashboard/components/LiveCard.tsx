@@ -12,6 +12,7 @@ import { Live, Comment, ChartPoint } from "@/lib/types"
 import { computeHealthScore } from "@/lib/health-score"
 import { youtubeTimestampUrl } from "@/lib/timestamp-url"
 import CommentsChart from "@/components/CommentsChart"
+import { useAuth } from "@/lib/auth-context"
 import { AlertTriangle, ArrowRight, X, Pin, Volume2, VolumeOff } from "lucide-react"
 import { format } from "date-fns"
 
@@ -76,6 +77,8 @@ export default function LiveCard({
   onDrop?: (e: React.DragEvent) => void
   onDragEnd?: (e: React.DragEvent) => void
 }) {
+  const { isAdmin } = useAuth()
+
   // Alturas calibradas para preencher 1080p
   // 1-3: 1 linha | 4-6: 2-3 cols, 2 linhas | 7-10: 4-5 cols, 2 linhas | 11-15: 3 linhas | 16+: 4 linhas
   const chartHeight  = liveCount === 1 ? 340 : liveCount === 2 ? 270 : liveCount <= 3 ? 210 : liveCount <= 6 ? 125 : liveCount <= 8 ? 120 : liveCount <= 10 ? 140 : liveCount <= 15 ? 90 : 60
@@ -95,9 +98,23 @@ export default function LiveCard({
   const mutedRef = useRef(muted)
   mutedRef.current = muted
   const audioCtxRef = useRef<AudioContext | null>(null)
+  const getvAudioRef = useRef<HTMLAudioElement | null>(null)
+  const channelKey = (live.channel || "").toUpperCase()
 
   const playAlertSound = () => {
     try {
+      if (channelKey === "GETV") {
+        const play = () => {
+          if (!getvAudioRef.current) getvAudioRef.current = new Audio("/getv-alert.mp3")
+          const a = getvAudioRef.current
+          a.currentTime = 0
+          a.volume = 0.5
+          a.play().catch(() => {})
+        }
+        play()
+        setTimeout(play, 2500)
+        return
+      }
       if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
       const ctx = audioCtxRef.current
       const now = ctx.currentTime
@@ -227,10 +244,17 @@ export default function LiveCard({
       if (!mk) continue
       techByMinute[mk] = (techByMinute[mk] ?? 0) + 1
     }
+    const viewers = live.concurrent_viewers ?? 0
+    const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
     return chartData
-      .map((p) => ({ ...p, technical: (techByMinute[p.minute] ?? 0) + (p.f_count ?? 0) }))
+      .map((p) => {
+        const tech = techByMinute[p.minute] ?? 0
+        const f = p.f_count ?? 0
+        const isSurge = f >= fThreshold && tech >= 2
+        return { ...p, technical: tech + (isSurge ? f : 0) }
+      })
       .sort((a, b) => a.minute.localeCompare(b.minute))
-  }, [chartData, visibleComments])
+  }, [chartData, visibleComments, live.concurrent_viewers])
 
   const healthScore = useMemo(
     () => computeHealthScore(
@@ -270,11 +294,21 @@ export default function LiveCard({
 
   const categoryTotal = categoryBreakdown.reduce((s, [, c]) => s + c, 0)
 
-  // Total de problemas: comentários visíveis + F's dos surges (que não são comentários individuais)
-  const totalFFromSurges = useMemo(() =>
-    chartData.reduce((sum, p) => sum + (p.f_count ?? 0), 0),
-    [chartData]
-  )
+  // Total de problemas: comentários visíveis + F's apenas de minutos com surge confirmado
+  const totalFFromSurges = useMemo(() => {
+    const viewers = live.concurrent_viewers ?? 0
+    const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
+    const techByMinute: Record<string, number> = {}
+    for (const c of visibleComments) {
+      const mk = minuteKeyFromTs(c.ts)
+      if (mk) techByMinute[mk] = (techByMinute[mk] ?? 0) + 1
+    }
+    return chartData.reduce((sum, p) => {
+      const f = p.f_count ?? 0
+      const tech = techByMinute[p.minute] ?? 0
+      return sum + (f >= fThreshold && tech >= 2 ? f : 0)
+    }, 0)
+  }, [chartData, visibleComments, live.concurrent_viewers])
   const totalProblems = visibleComments.length + totalFFromSurges
 
   const techRate = Math.round((visibleComments.length / Math.max(live.total_comments, 1)) * 100)
@@ -285,7 +319,6 @@ export default function LiveCard({
   const flashBorder = lastCat === "AUDIO" ? "rgba(96,165,250,0.9)"   : lastCat === "VIDEO" ? "rgba(192,132,252,0.9)"
     : lastCat === "REDE"  ? "rgba(251,146,60,0.9)"   : lastCat === "GC" ? "rgba(34,211,238,0.9)"   : "rgba(239,68,68,0.9)"
 
-  const channelKey  = (live.channel || "").toUpperCase()
   const channelLogo = channelKey === "GETV" ? "/getv-logo.png" : channelKey === "CAZETV" ? "/cazetv-logo-branco.png" : null
   const logoW       = channelKey === "GETV" ? 120 : 150
   const logoH       = channelKey === "GETV" ? 36  : 46
@@ -501,12 +534,14 @@ export default function LiveCard({
                       {catKey && <span className={`${ultraDense ? "text-[8px]" : "text-[9px]"} font-bold font-mono ${isSynthetic ? "text-cyan-400/70" : catStyle.text}`}>{catKey}</span>}
                       <span className={`${ultraDense ? "text-[8px]" : "text-[10px]"} text-white/50 font-mono`}>{format(new Date(c.ts.replace(" ", "T")), "HH:mm:ss")}</span>
                     </div>
-                    <button
-                      onClick={() => dismissComment(c)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70"
-                    >
-                      <X size={10} />
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => dismissComment(c)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-white/25 hover:text-red-400/70"
+                      >
+                        <X size={10} />
+                      </button>
+                    )}
                   </div>
                 )
               })

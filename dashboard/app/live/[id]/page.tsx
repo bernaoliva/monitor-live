@@ -8,6 +8,7 @@ import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import { computeHealthScore } from "@/lib/health-score"
 import CommentFeed from "@/components/CommentFeed"
+import { useAuth } from "@/lib/auth-context"
 import CommentsChart from "@/components/CommentsChart"
 import ExportButton from "@/components/ExportButton"
 import { ArrowLeft, ExternalLink, Clock } from "lucide-react"
@@ -46,6 +47,7 @@ const CAT_TEXT: Record<string, string> = {
 
 export default function LivePage() {
   const { id }                    = useParams<{ id: string }>()
+  const { isAdmin }               = useAuth()
   const [live, setLive]           = useState<Live | null>(null)
   const [notFound, setNotFound]   = useState(false)
   const [comments, setComments]         = useState<Comment[]>([])
@@ -433,7 +435,7 @@ export default function LivePage() {
             Erro ao descartar. Tente novamente.
           </div>
         )}
-        <CommentFeed comments={displayed} onDismiss={dismissComment} />
+        <CommentFeed comments={displayed} onDismiss={isAdmin ? dismissComment : undefined} />
       </div>
     </div>
   )
