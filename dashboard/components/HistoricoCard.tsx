@@ -127,17 +127,31 @@ export default function HistoricoCard({ live }: { live: Live }) {
     [minutePoints, techComments],
   )
 
+  // techByMinute: conta tech comments reais por chave de minuto (igual LiveCard/LiveDetail)
+  const techByMinute = useMemo(() => {
+    const acc: Record<string, number> = {}
+    for (const c of techComments) {
+      const m = c.ts.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+      const mk = m ? `${m[1]}T${m[2]}` : null
+      // fallback para HH:mm se minutePoints usar esse formato
+      const hhmm = c.ts.match(/(\d{2}:\d{2})/)?.[1]
+      if (mk) acc[mk] = (acc[mk] ?? 0) + 1
+      if (hhmm && hhmm !== mk) acc[hhmm] = (acc[hhmm] ?? 0) + 1
+    }
+    return acc
+  }, [techComments])
+
   // Aplica lógica de surge de F (mesma do LiveCard)
   const chartData = useMemo(() => {
     const viewers = peakViewers ?? live.concurrent_viewers ?? 0
     const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
     return rawChartData.map((p) => {
+      const tech = techByMinute[p.minute] ?? 0
       const f = p.f_count ?? 0
-      const tech = p.technical ?? 0
       const isSurge = f >= fThreshold && tech >= 2
       return { ...p, technical: tech + (isSurge ? f : 0) }
     })
-  }, [rawChartData, peakViewers, live.concurrent_viewers])
+  }, [rawChartData, techByMinute, peakViewers, live.concurrent_viewers])
 
   // Total de F's apenas de minutos com surge confirmado
   const totalFFromSurges = useMemo(() => {
@@ -145,10 +159,10 @@ export default function HistoricoCard({ live }: { live: Live }) {
     const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
     return rawChartData.reduce((sum, p) => {
       const f = p.f_count ?? 0
-      const tech = p.technical ?? 0
+      const tech = techByMinute[p.minute] ?? 0
       return sum + (f >= fThreshold && tech >= 2 ? f : 0)
     }, 0)
-  }, [rawChartData, peakViewers, live.concurrent_viewers])
+  }, [rawChartData, techByMinute, peakViewers, live.concurrent_viewers])
 
   const totalProblems = techComments.length + totalFFromSurges
 
