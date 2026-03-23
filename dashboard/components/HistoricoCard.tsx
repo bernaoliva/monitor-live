@@ -141,9 +141,9 @@ export default function HistoricoCard({ live }: { live: Live }) {
     return acc
   }, [techComments])
 
-  // Aplica lógica de surge de F (mesma do LiveCard)
+  // Aplica lógica de surge de F (mesma do LiveCard — usa concurrent_viewers, não peak)
   const chartData = useMemo(() => {
-    const viewers = peakViewers ?? live.concurrent_viewers ?? 0
+    const viewers = live.concurrent_viewers ?? 0
     const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
     return rawChartData.map((p) => {
       const tech = techByMinute[p.minute] ?? 0
@@ -151,18 +151,18 @@ export default function HistoricoCard({ live }: { live: Live }) {
       const isSurge = f >= fThreshold && tech >= 2
       return { ...p, technical: tech + (isSurge ? f : 0) }
     })
-  }, [rawChartData, techByMinute, peakViewers, live.concurrent_viewers])
+  }, [rawChartData, techByMinute, live.concurrent_viewers])
 
   // Total de F's apenas de minutos com surge confirmado
   const totalFFromSurges = useMemo(() => {
-    const viewers = peakViewers ?? live.concurrent_viewers ?? 0
+    const viewers = live.concurrent_viewers ?? 0
     const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
     return rawChartData.reduce((sum, p) => {
       const f = p.f_count ?? 0
       const tech = techByMinute[p.minute] ?? 0
       return sum + (f >= fThreshold && tech >= 2 ? f : 0)
     }, 0)
-  }, [rawChartData, techByMinute, peakViewers, live.concurrent_viewers])
+  }, [rawChartData, techByMinute, live.concurrent_viewers])
 
   const totalProblems = techComments.length + totalFFromSurges
 
