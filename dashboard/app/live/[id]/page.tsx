@@ -262,9 +262,9 @@ export default function LivePage() {
     () => computeHealthScore(
       live?.concurrent_viewers ?? 0,
       visibleTech.map((c) => ({ ts: c.ts, severity: c.severity, issue: c.issue })),
-      chartPoints,
+      chartData,
     ),
-    [live?.concurrent_viewers, visibleTech, chartPoints],
+    [live?.concurrent_viewers, visibleTech, chartData],
   )
 
   const handleMinuteClick = useCallback((minuteKey: string) => {

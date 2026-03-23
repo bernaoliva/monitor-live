@@ -132,11 +132,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
     const acc: Record<string, number> = {}
     for (const c of techComments) {
       const m = c.ts.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
-      const mk = m ? `${m[1]}T${m[2]}` : null
-      // fallback para HH:mm se minutePoints usar esse formato
-      const hhmm = c.ts.match(/(\d{2}:\d{2})/)?.[1]
-      if (mk) acc[mk] = (acc[mk] ?? 0) + 1
-      if (hhmm && hhmm !== mk) acc[hhmm] = (acc[hhmm] ?? 0) + 1
+      if (m) acc[`${m[1]}T${m[2]}`] = (acc[`${m[1]}T${m[2]}`] ?? 0) + 1
     }
     return acc
   }, [techComments])
