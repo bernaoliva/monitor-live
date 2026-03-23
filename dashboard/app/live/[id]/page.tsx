@@ -201,8 +201,39 @@ export default function LivePage() {
   const displayed = filter === "all"
     ? activeComments
     : [...visibleTech].sort((a, b) => b.ts.localeCompare(a.ts))
-  const techCount   = visibleTech.length
-  const chartData  = chartPoints
+  // Aplica lógica de surge de F (mesma do LiveCard)
+  const chartData = useMemo(() => {
+    const viewers = live?.concurrent_viewers ?? 0
+    const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
+    const techByMinute: Record<string, number> = {}
+    for (const c of visibleTech) {
+      const mk = minuteKeyFromTs(c.ts)
+      if (mk) techByMinute[mk] = (techByMinute[mk] ?? 0) + 1
+    }
+    return chartPoints.map((p) => {
+      const tech = techByMinute[p.minute] ?? 0
+      const f = p.f_count ?? 0
+      const isSurge = f >= fThreshold && tech >= 2
+      return { ...p, technical: tech + (isSurge ? f : 0) }
+    })
+  }, [chartPoints, visibleTech, live?.concurrent_viewers])
+
+  const totalFFromSurges = useMemo(() => {
+    const viewers = live?.concurrent_viewers ?? 0
+    const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
+    const techByMinute: Record<string, number> = {}
+    for (const c of visibleTech) {
+      const mk = minuteKeyFromTs(c.ts)
+      if (mk) techByMinute[mk] = (techByMinute[mk] ?? 0) + 1
+    }
+    return chartPoints.reduce((sum, p) => {
+      const f = p.f_count ?? 0
+      const tech = techByMinute[p.minute] ?? 0
+      return sum + (f >= fThreshold && tech >= 2 ? f : 0)
+    }, 0)
+  }, [chartPoints, visibleTech, live?.concurrent_viewers])
+
+  const techCount   = visibleTech.length + totalFFromSurges
   const techRate   = live
     ? Math.round((techCount / Math.max(live.total_comments, 1)) * 100)
     : 0

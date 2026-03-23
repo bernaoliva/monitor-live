@@ -90,7 +90,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
         .filter((d) => /^\d{2}:\d{2}$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.id))
         .map((d) => {
           const raw = d.data()
-          return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined }
+          return { minute: d.id, total: raw.total ?? 0, technical: raw.technical ?? 0, viewers: raw.viewers ?? undefined, f_count: raw.f_count ?? 0 }
         })
         .sort((a, b) => a.minute.localeCompare(b.minute))
       setMinutePoints(pts)
@@ -122,13 +122,38 @@ export default function HistoricoCard({ live }: { live: Live }) {
 
   // Usa minutePoints (subcoleção minutes/) quando disponível — mesma fonte que live/[id]
   // Fallback para buildChartData enquanto os docs ainda não carregaram
-  const chartData = useMemo(
+  const rawChartData = useMemo(
     () => minutePoints.length > 0 ? minutePoints : buildChartData(techComments),
     [minutePoints, techComments],
   )
 
+  // Aplica lógica de surge de F (mesma do LiveCard)
+  const chartData = useMemo(() => {
+    const viewers = peakViewers ?? live.concurrent_viewers ?? 0
+    const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
+    return rawChartData.map((p) => {
+      const f = p.f_count ?? 0
+      const tech = p.technical ?? 0
+      const isSurge = f >= fThreshold && tech >= 2
+      return { ...p, technical: tech + (isSurge ? f : 0) }
+    })
+  }, [rawChartData, peakViewers, live.concurrent_viewers])
+
+  // Total de F's apenas de minutos com surge confirmado
+  const totalFFromSurges = useMemo(() => {
+    const viewers = peakViewers ?? live.concurrent_viewers ?? 0
+    const fThreshold = Math.max(30, Math.floor(viewers * 0.0002))
+    return rawChartData.reduce((sum, p) => {
+      const f = p.f_count ?? 0
+      const tech = p.technical ?? 0
+      return sum + (f >= fThreshold && tech >= 2 ? f : 0)
+    }, 0)
+  }, [rawChartData, peakViewers, live.concurrent_viewers])
+
+  const totalProblems = techComments.length + totalFFromSurges
+
   const techRate = Math.round(
-    ((live.technical_comments || 0) / Math.max(live.total_comments, 1)) * 100
+    (totalProblems / Math.max(live.total_comments, 1)) * 100
   )
 
   const healthScore = useMemo(
@@ -241,7 +266,7 @@ export default function HistoricoCard({ live }: { live: Live }) {
           <p className={`font-data text-base font-black ${
             techRate > 15 ? "text-red-400" : techRate > 5 ? "text-amber-400" : "text-emerald-400"
           }`}>
-            {(live.technical_comments || 0).toLocaleString()}
+            {totalProblems.toLocaleString()}
           </p>
         </div>
         <div className="px-3 py-2.5 border-l border-white/[0.06]">
