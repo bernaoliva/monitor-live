@@ -41,19 +41,38 @@ export function computeHealthScore(
     0.4,
   ), 2.0)
 
+  // 0. F surge: contar F surges como problemas reais (antes do cálculo de penalties)
+  let fSurgeCount = 0
+  let fSurgePenalty = 0
+  for (const m of sorted) {
+    const fCount = m.f_count ?? 0
+    const mViewers = m.viewers ?? fallbackViewers
+    const fThreshold = Math.max(30, Math.floor(mViewers * 0.0002))
+    if (fCount >= fThreshold && m.technical >= 2) {
+      fSurgeCount += fCount
+      const af = Math.min(Math.max(4 / Math.log10(Math.max(mViewers, 100)), 0.4), 2.0)
+      fSurgePenalty += Math.sqrt(fCount / fThreshold) * 3 * af
+    }
+  }
+  fSurgePenalty = Math.min(fSurgePenalty, 12)
+  const totalProblems = techCount + fSurgeCount
+
   // 1. Count penalty: taxa por minuto ajustada pela audiência
-  //    Pure rate-based: concentrados pesam mais, espalhados pesam menos.
-  const effectiveTech = techCount * audienceFactor
+  const totalRatePercent = totalMsgs > 0 ? (totalProblems / totalMsgs) * 100 : 0
+  const effectiveTech = totalProblems * audienceFactor
   const techRate = effectiveTech / Math.max(n, 1)
   const countPenalty = Math.min(Math.sqrt(techRate) * 20, 45)
 
-  // 2. Rate penalty: curva sqrt na taxa % (já normaliza por volume de msgs)
-  const ratePenalty = Math.min(Math.sqrt(ratePercent) * 11, 60)
+  // 2. Rate penalty: curva sqrt na taxa % (inclui F surges)
+  const ratePenalty = Math.min(Math.sqrt(totalRatePercent) * 11, 60)
 
   // Base: a dimensão pior domina
   const basePenalty = Math.max(countPenalty, ratePenalty)
 
-  // 3. Peak penalty: excesso da pior janela de 3 min sobre a média
+  // 3. Absolute penalty: penalidade por volume bruto de problemas
+  const absolutePenalty = Math.min(Math.sqrt(totalProblems) * 1.1, 13)
+
+  // 4. Peak penalty: excesso da pior janela de 3 min sobre a média
   //    Só ativa após 10 minutos de dados (evita ruído no início)
   let worstWindowRate = 0
   if (n >= 10) {
@@ -65,25 +84,12 @@ export function computeHealthScore(
       }
     }
   }
-  const peakExcess = Math.max(0, worstWindowRate - ratePercent)
+  const peakExcess = Math.max(0, worstWindowRate - totalRatePercent)
   const peakPenalty = Math.min(Math.sqrt(peakExcess) * 5, 10)
 
-  // 4. Severity: comentários high adicionam penalidade extra
+  // 5. Severity: comentários high adicionam penalidade extra
   const highCount = comments.filter((c) => c.severity === "high").length
   const severityPenalty = Math.min(highCount * 0.8 * audienceFactor, 8)
-
-  // 5. F surge penalty: penaliza minutos com surge de F correlacionado com técnicos
-  let fSurgePenalty = 0
-  for (const m of sorted) {
-    const fCount = m.f_count ?? 0
-    const mViewers = m.viewers ?? fallbackViewers
-    const fThreshold = Math.max(30, Math.floor(mViewers * 0.0002))
-    if (fCount >= fThreshold && m.technical >= 2) {
-      const af = Math.min(Math.max(4 / Math.log10(Math.max(mViewers, 100)), 0.4), 2.0)
-      fSurgePenalty += Math.sqrt(fCount / fThreshold) * 3 * af
-    }
-  }
-  fSurgePenalty = Math.min(fSurgePenalty, 8)
 
   // 6. Recovery: tempo real desde o último problema técnico até AGORA
   //    Usa o relógio atual, não o último doc — funciona mesmo em lives com chat esparso
@@ -115,7 +121,7 @@ export function computeHealthScore(
   const absoluteRecovery = Math.sqrt(cleanMinutes) * 0.7
   const recoveryBonus = Math.min(Math.max(fractionRecovery, absoluteRecovery), 10)
 
-  const raw = 100 - basePenalty - peakPenalty - severityPenalty - fSurgePenalty + recoveryBonus
+  const raw = 100 - basePenalty - absolutePenalty - peakPenalty - severityPenalty - fSurgePenalty + recoveryBonus
   const score = Math.max(0, Math.min(100, Math.floor(raw)))
 
   const level = score >= 80 ? "OK" : score >= 50 ? "ATENÇÃO" : score >= 25 ? "ALERTA" : "CRÍTICO"
