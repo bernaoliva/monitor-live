@@ -70,7 +70,7 @@ export function computeHealthScore(
   const basePenalty = Math.max(countPenalty, ratePenalty)
 
   // 3. Absolute penalty: penalidade por volume bruto de problemas
-  const absolutePenalty = Math.min(Math.sqrt(totalProblems) * 1.1, 13)
+  const absolutePenalty = Math.min(Math.sqrt(totalProblems) * 1.2, 17)
 
   // 4. Peak penalty: excesso da pior janela de 3 min sobre a média
   //    Só ativa após 10 minutos de dados (evita ruído no início)
