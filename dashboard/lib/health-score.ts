@@ -70,7 +70,7 @@ export function computeHealthScore(
   const basePenalty = Math.max(countPenalty, ratePenalty)
 
   // 3. Absolute penalty: penalidade por volume bruto de problemas
-  const absolutePenalty = Math.min(Math.sqrt(totalProblems) * 1.2, 17)
+  const absolutePenalty = Math.min(Math.sqrt(totalProblems) * 1.1, 13)
 
   // 4. Peak penalty: excesso da pior janela de 3 min sobre a média
   //    Só ativa após 10 minutos de dados (evita ruído no início)
@@ -117,9 +117,11 @@ export function computeHealthScore(
       liveDurationMin = Math.max(n, Math.floor((Date.now() - tFirst) / 60000))
     }
   }
-  const fractionRecovery = (cleanMinutes / Math.max(liveDurationMin, 1)) * 12
-  const absoluteRecovery = Math.sqrt(cleanMinutes) * 0.7
-  const recoveryBonus = Math.min(Math.max(fractionRecovery, absoluteRecovery), 10)
+  const fractionRecovery = (cleanMinutes / Math.max(liveDurationMin, 1)) * 15
+  const absoluteRecovery = Math.sqrt(cleanMinutes) * 3.0
+  // Recovery cap escala inversamente com gravidade: muitos problemas → recovery limitado
+  const recoveryCap = totalProblems > 200 ? 12 : totalProblems > 50 ? 18 : 25
+  const recoveryBonus = Math.min(Math.max(fractionRecovery, absoluteRecovery), recoveryCap)
 
   const raw = 100 - basePenalty - absolutePenalty - peakPenalty - severityPenalty - fSurgePenalty + recoveryBonus
   const score = Math.max(0, Math.min(100, Math.floor(raw)))
