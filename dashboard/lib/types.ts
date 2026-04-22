@@ -34,6 +34,10 @@ export interface Comment {
   issue: string | null
   severity: Severity
   synthetic?: boolean
+  model_confidence?: number
+  classification_method?: string
+  model_version?: string
+  dismissed_by_admin?: boolean
 }
 
 export interface ChartPoint {
