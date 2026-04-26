@@ -58,6 +58,26 @@ training/label_with_gpt.py
 training/review_gpt_labels.py
 training/sample_for_labeling.py
 
+# === CORPUS DE TREINO (dados sensíveis: 500k comentários reais) ===
+training/corpus/
+inference/data/
+
+# === SCRIPTS DE DEPLOY/VM COM CREDENCIAIS ===
+check_vm.py
+deploy_vm.py
+
+# === DEBUG / SIMULAÇÃO LOCAL ===
+ERROR
+sim_f_surge.py
+_ID*/
+*CAZÉTV*
+
+# === SCRIPTS .mjs LOCAIS (manipulação direta Firestore) ===
+dashboard/*.mjs
+
+# === ASSETS LOCAIS (não-portfolio) ===
+img/
+
 # === OS ===
 .DS_Store
 Thumbs.db
