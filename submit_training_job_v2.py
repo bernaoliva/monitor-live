@@ -17,9 +17,9 @@ from pathlib import Path
 from google.cloud import aiplatform, storage
 
 
-PROJECT  = "youtube-monitor-474920"
+PROJECT  = "SEU_PROJECT_ID"
 REGION   = "us-central1"
-BUCKET   = "monitor-lives-bucket"
+BUCKET   = "SEU_BUCKET_GCS"
 JOB_PREFIX = "trainer-mmbert-v2"
 
 CONTAINER_GPU = "us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-2.py310:latest"

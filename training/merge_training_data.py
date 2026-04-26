@@ -28,7 +28,7 @@ SYNTHETIC_FILE = "training_data_backup_sintetico.csv"
 LABELED_FILE = "real_comments_labeled.csv"
 OUTPUT_FILE = os.path.join("..", "training_data.csv")
 
-GCS_BUCKET = "youtube-monitor-474920-ml"
+GCS_BUCKET = "SEU_BUCKET_GCS"
 GCS_PATH = "data/training_data.csv"
 
 
@@ -196,7 +196,7 @@ def main():
     # 8. Proximos passos
     print(f"\nProximos passos:")
     print(f"  1. python submit_training_job.py \\")
-    print(f"       --project_id youtube-monitor-474920 \\")
+    print(f"       --project_id SEU_PROJECT_ID \\")
     print(f"       --bucket_name {args.bucket} \\")
     print(f"       --use_gpu --epochs 6")
     print(f"  2. python download_model.py --bucket_name {args.bucket}")

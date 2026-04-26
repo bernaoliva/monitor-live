@@ -58,9 +58,9 @@ OEMBED_CACHE_TTL   = 300
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 CHANNELS = [
-    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": "UCZiYbVptd3PVPf4f6eR6UaQ",
+    {"display": "CAZETV", "name": "CazéTV", "handle": "@CazeTV", "channel_id": "SEU_CHANNEL_ID_CAZETV",
      "extra_handles": ["@cazetvdois"]},
-    {"display": "GETV", "name": "ge.tv", "handle": "@GETV", "channel_id": "UCgCKagVhzGnZcuP9bSMgMCg"},
+    {"display": "GETV", "name": "ge.tv", "handle": "@GETV", "channel_id": "SEU_CHANNEL_ID"},
 ]
 
 SUPERVISOR_POLL_SECONDS        = 60

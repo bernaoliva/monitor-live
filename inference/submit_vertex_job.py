@@ -8,10 +8,10 @@ from pathlib import Path
 from google.cloud import aiplatform, storage
 
 
-PROJECT  = "youtube-monitor-474920"
+PROJECT  = "SEU_PROJECT_ID"
 REGION   = "us-central1"
-BUCKET   = "monitor-lives-bucket"
-IMAGE    = f"us-central1-docker.pkg.dev/{PROJECT}/vllm-images/labeling:latest"
+BUCKET   = "SEU_BUCKET_GCS"
+IMAGE    = f"{REGION}-docker.pkg.dev/{PROJECT}/vllm-images/labeling:latest"
 JOB_PREFIX = "labeling-vllm"
 
 

@@ -17,7 +17,7 @@ Uso:
   python training/evaluate.py \\
       --gold training/corpus/test_gold.parquet \\
       --model-v2 ./model_v2 \\
-      --model-v1-url https://classificador-tecnico-559450313387.us-central1.run.app
+      --model-v1-url https://SEU_CLOUD_RUN.run.app
 """
 
 import argparse
@@ -100,7 +100,7 @@ def main():
     ap.add_argument("--model-v2", default="./model_v2",
                     help="diretório do modelo BERTimbau treinado")
     ap.add_argument("--model-v1-url",
-                    default="https://classificador-tecnico-559450313387.us-central1.run.app",
+                    default="https://SEU_CLOUD_RUN.run.app",
                     help="URL do Cloud Run do modelo atual (v1)")
     ap.add_argument("--out", default="training/eval_results_v2.json")
     ap.add_argument("--report-md", default="training/eval_results_v2.md")

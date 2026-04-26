@@ -7,7 +7,7 @@ from datetime import datetime
 from google.cloud import aiplatform
 
 
-PROJECT  = "youtube-monitor-474920"
+PROJECT  = "SEU_PROJECT_ID"
 REGION   = "us-central1"
 
 

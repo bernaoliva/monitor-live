@@ -68,7 +68,7 @@ def parse_args():
     p.add_argument("--project_id",    required=True)
     p.add_argument("--bucket_name",   required=True)
     p.add_argument("--region",        default="us-central1")
-    p.add_argument("--service_name",  default="classificador-tecnico")
+    p.add_argument("--service_name",  default="SEU_SERVICE_NAME")
     p.add_argument("--memory",        default="2Gi",
                    help="Memoria do container (2Gi para CPU, 8Gi para GPU)")
     p.add_argument("--cpu",           default="2",
