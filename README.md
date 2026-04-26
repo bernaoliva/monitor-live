@@ -19,7 +19,7 @@ Analisa milhares de comentários por minuto e classifica automaticamente reclama
                   │ coleta mensagens do chat
                   ▼
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│                          VM LOCAL (192.168.99.111)                                │
+│                          VM LOCAL (rede interna)                                  │
 │                          monitor.py (systemd service)                             │
 │                                                                                   │
 │  ┌────────────────────┐  batch 64 msgs   ┌──────────────────────────────────┐    │
@@ -48,7 +48,7 @@ Analisa milhares de comentários por minuto e classifica automaticamente reclama
                                                           │ + contadores (flush 3s)
                                                           ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                          FIRESTORE (youtube-monitor-474920)                     │
+│                          FIRESTORE (SEU_PROJECT_ID)                             │
 │                                                                                 │
 │  /lives/{video_id}                                                              │
 │    ├── status, title, viewers, counters, issue_counts                           │

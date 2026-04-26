@@ -18,7 +18,7 @@
 ## Canais monitorados
 
 - **CAZETV** (`@CazeTV`)
-- **GETV** (`@GETV` / `UCgCKagVhzGnZcuP9bSMgMCg`)
+- **GETV** (`@GETV` / `SEU_CHANNEL_ID`)
 
 ---
 
@@ -43,7 +43,7 @@
 **Impacto**: De 52.001 comentarios, apenas 7 classificados como tecnicos. 26 comentarios tecnicos reais perdidos.
 
 **Causa raiz 1 — URL GPU duplicada (CRITICO)**:
-`SERVING_URL` na VM tinha `https://https://classificador-tecnico-...` porque o `sed` de deploy adicionou `https://` sobre placeholder que ja incluia o prefixo. Resultado: 19.226 chamadas GPU falharam com `NameResolutionError` durante o pico (300k-2.76M viewers, ~23:16-01:37 BRT).
+`SERVING_URL` na VM tinha `https://https://SEU_CLOUD_RUN.run.app` porque o `sed` de deploy adicionou `https://` sobre placeholder que ja incluia o prefixo. Resultado: 19.226 chamadas GPU falharam com `NameResolutionError` durante o pico (300k-2.76M viewers, ~23:16-01:37 BRT).
 
 **Causa raiz 2 — keyword_override nao rodava com API falha**:
 O `_keyword_override` estava dentro do bloco `if res:` no `_process_batch`. Quando a API retornava None (falha de rede), o keyword fallback simplesmente nao executava. Comentarios como "sem audio", "travando" que deveriam ser pegos por regex foram perdidos.
@@ -91,7 +91,7 @@ npx vercel alias <deployment-url> monitor-cazetv.vercel.app
 # 1. Garantir que SERVING_URL esta como placeholder no arquivo local antes do scp
 scp -i ~/.ssh/monitor_vm monitor.py USUARIO@IP_DA_VM:/home/monitor-cazetv/monitor/monitor.py
 # 2. Restaurar URL real na VM
-ssh -i ~/.ssh/monitor_vm USUARIO@IP_DA_VM "sed -i 's|SUA_URL_CLOUD_RUN|https://classificador-tecnico-559450313387.us-central1.run.app|' /home/monitor-cazetv/monitor/monitor.py"
+ssh -i ~/.ssh/monitor_vm USUARIO@IP_DA_VM "sed -i 's|SUA_URL_CLOUD_RUN|https://SEU_CLOUD_RUN.run.app|' /home/monitor-cazetv/monitor/monitor.py"
 # 3. Reiniciar servico
 ssh -i ~/.ssh/monitor_vm USUARIO@IP_DA_VM "sudo systemctl restart monitor-cazetv.service"
 ```
