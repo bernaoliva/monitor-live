@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { doc, collection, onSnapshot, query, orderBy, where, limitToLast, updateDoc, increment } from "firebase/firestore"
+import { doc, collection, onSnapshot, query, orderBy, where, limitToLast, updateDoc, increment, setDoc, serverTimestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
 import { computeHealthScore } from "@/lib/health-score"
@@ -47,7 +47,7 @@ const CAT_TEXT: Record<string, string> = {
 
 export default function LivePage() {
   const { id }                    = useParams<{ id: string }>()
-  const { isAdmin }               = useAuth()
+  const { isAdmin, user }         = useAuth()
   const [live, setLive]           = useState<Live | null>(null)
   const [notFound, setNotFound]   = useState(false)
   const [comments, setComments]         = useState<Comment[]>([])
@@ -77,6 +77,7 @@ export default function LivePage() {
     try {
       await updateDoc(doc(db, "lives", id, "comments", c.id), {
         is_technical: false,
+        dismissed_by_admin: true,
       })
       const liveUpdate: Record<string, unknown> = {
         technical_comments: increment(-1),
@@ -90,6 +91,28 @@ export default function LivePage() {
           doc(db, "lives", id, "minutes", minuteKey),
           { technical: increment(-1) }
         )
+      }
+      // Salva o falso positivo em coleção dedicada para análise/retreino
+      try {
+        await setDoc(doc(db, "bad_examples", c.id), {
+          comment_id:            c.id,
+          text:                  c.text,
+          author:                c.author,
+          ts:                    c.ts,
+          video_id:              id,
+          channel:               live?.channel ?? null,
+          live_title:            live?.title ?? null,
+          original_category:     c.category,
+          original_issue:        c.issue,
+          original_severity:     c.severity,
+          model_confidence:      c.model_confidence ?? null,
+          classification_method: c.classification_method ?? null,
+          model_version:         c.model_version ?? null,
+          dismissed_at:          serverTimestamp(),
+          dismissed_by:          user?.email ?? "unknown",
+        })
+      } catch (badExErr) {
+        console.warn("Falha ao salvar bad_example:", badExErr)
       }
     } catch (e) {
       console.error("Erro ao descartar comentário:", e)
@@ -142,6 +165,9 @@ export default function LivePage() {
           issue:        raw.issue        ?? null,
           severity:     raw.severity     ?? "none",
           synthetic:    raw.synthetic    ?? undefined,
+          model_confidence:      raw.model_confidence ?? undefined,
+          classification_method: raw.classification_method ?? undefined,
+          model_version:         raw.model_version ?? undefined,
         } satisfies Comment
       }).reverse() // docs chegam em asc; reverter para mostrar mais recente primeiro
       allComments.current = data
@@ -183,6 +209,9 @@ export default function LivePage() {
           issue:        raw.issue        ?? null,
           severity:     raw.severity     ?? "none",
           synthetic:    raw.synthetic    ?? undefined,
+          model_confidence:      raw.model_confidence ?? undefined,
+          classification_method: raw.classification_method ?? undefined,
+          model_version:         raw.model_version ?? undefined,
         } satisfies Comment
       }).sort((a, b) => a.ts.localeCompare(b.ts))
       setTechComments(data)
