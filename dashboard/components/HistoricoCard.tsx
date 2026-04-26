@@ -114,6 +114,9 @@ export default function HistoricoCard({ live }: { live: Live }) {
             category:     raw.category     ?? null,
             issue:        raw.issue        ?? null,
             severity:     raw.severity     ?? "none",
+            model_confidence:      raw.model_confidence ?? undefined,
+            classification_method: raw.classification_method ?? undefined,
+            model_version:         raw.model_version ?? undefined,
           } satisfies Comment
         })
       )
