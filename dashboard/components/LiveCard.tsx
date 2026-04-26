@@ -5,7 +5,7 @@ import Link from "next/link"
 import Image from "next/image"
 import {
   collection, onSnapshot, query, where,
-  doc, updateDoc, increment,
+  doc, updateDoc, increment, setDoc, serverTimestamp,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { Live, Comment, ChartPoint } from "@/lib/types"
@@ -77,7 +77,7 @@ export default function LiveCard({
   onDrop?: (e: React.DragEvent) => void
   onDragEnd?: (e: React.DragEvent) => void
 }) {
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
 
   // Alturas calibradas para preencher 1080p
   // 1-3: 1 linha | 4-6: 2-3 cols, 2 linhas | 7-10: 4-5 cols, 2 linhas | 11-15: 3 linhas | 16+: 4 linhas
@@ -171,7 +171,7 @@ export default function LiveCard({
       return next
     })
     try {
-      await updateDoc(doc(db, "lives", live.video_id, "comments", c.id), { is_technical: false })
+      await updateDoc(doc(db, "lives", live.video_id, "comments", c.id), { is_technical: false, dismissed_by_admin: true })
       const liveUpdate: Record<string, unknown> = { technical_comments: increment(-1) }
       if (c.category && c.issue) {
         liveUpdate[`issue_counts.${c.category}:${c.issue}`] = increment(-1)
@@ -179,6 +179,28 @@ export default function LiveCard({
       await updateDoc(doc(db, "lives", live.video_id), liveUpdate)
       if (minuteKey) {
         await updateDoc(doc(db, "lives", live.video_id, "minutes", minuteKey), { technical: increment(-1) })
+      }
+      // Salva o falso-positivo em coleção dedicada para análise/retreino futuro
+      try {
+        await setDoc(doc(db, "bad_examples", c.id), {
+          comment_id:            c.id,
+          text:                  c.text,
+          author:                c.author,
+          ts:                    c.ts,
+          video_id:              live.video_id,
+          channel:               live.channel,
+          live_title:            live.title,
+          original_category:     c.category,
+          original_issue:        c.issue,
+          original_severity:     c.severity,
+          model_confidence:      c.model_confidence ?? null,
+          classification_method: c.classification_method ?? null,
+          model_version:         c.model_version ?? null,
+          dismissed_at:          serverTimestamp(),
+          dismissed_by:          user?.email ?? "unknown",
+        })
+      } catch (badExErr) {
+        console.warn("Falha ao salvar bad_example:", badExErr)
       }
     } catch (e) {
       console.error("Erro ao descartar comentário:", e)
@@ -219,6 +241,9 @@ export default function LiveCard({
               is_technical: raw.is_technical ?? false, category: raw.category ?? null,
               issue: raw.issue ?? null, severity: raw.severity ?? "none",
               synthetic: raw.synthetic ?? undefined,
+              model_confidence:      raw.model_confidence ?? undefined,
+              classification_method: raw.classification_method ?? undefined,
+              model_version:         raw.model_version ?? undefined,
             } satisfies Comment
           })
         )
