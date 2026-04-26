@@ -9,7 +9,7 @@ import { app } from "@/lib/firebase"
 
 const auth = getAuth(app)
 
-const ADMIN_EMAILS = ["boliva@livemode.com", "jcrispim@livemode.com"]
+const ADMIN_EMAILS: string[] = ["admin@example.com"]
 
 interface AuthCtx {
   user: User | null
