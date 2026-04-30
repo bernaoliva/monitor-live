@@ -89,18 +89,27 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # IA — Cloud Run (DistilBERT fine-tuned)
 SERVING_URL     = os.environ.get("SERVING_URL", "https://SUA_URL_CLOUD_RUN")
+if SERVING_URL.startswith("https://https://"):
+    SERVING_URL = SERVING_URL.replace("https://https://", "https://", 1)
+    print(f"[init] AVISO: URL duplicada corrigida → {SERVING_URL}")
 SERVING_TIMEOUT = int(os.environ.get("SERVING_TIMEOUT", "15"))
 LLM_WORKERS     = max(1, int(os.environ.get("LLM_WORKERS", "4")))
 
 # CPU/GPU híbrido — CPU local para lives com audiencia baixa
 LOCAL_SERVING_URL     = os.environ.get("LOCAL_SERVING_URL", "http://127.0.0.1:8080")
-LOCAL_SERVING_TIMEOUT = int(os.environ.get("LOCAL_SERVING_TIMEOUT", "10"))
+LOCAL_SERVING_TIMEOUT = int(os.environ.get("LOCAL_SERVING_TIMEOUT", "4"))
 GPU_VIEWER_THRESHOLD  = int(os.environ.get("GPU_VIEWER_THRESHOLD", "300000"))
 
 # Batch de classificação — GPU processa até 64 textos por chamada
 BATCH_SIZE     = int(os.environ.get("BATCH_SIZE",   "64"))   # textos por request ao Cloud Run
 BATCH_MAX_WAIT = float(os.environ.get("BATCH_MAX_WAIT", "0.1"))  # s — tempo máx para montar batch
 FS_FLUSH_SECS  = float(os.environ.get("FS_FLUSH_SECS",  "3.0"))  # s — flush contadores live doc
+
+# Surge de F — detecção de queda via chat
+F_COOLDOWN_SECS = int(os.environ.get("F_COOLDOWN_SECS", "180"))  # 3 min entre eventos
+
+# Versão do modelo — atualizar a cada deploy de classificador novo
+MODEL_VERSION = os.environ.get("MODEL_VERSION", "distilbert-v1-synthetic-2026-02")
 
 # HTTP
 HEADERS = {
@@ -124,6 +133,12 @@ for k, v in COOKIE_CONSENT.items():
 
 DEFAULT_PARAMS = {"hl": "pt-BR", "gl": "BR"}
 BR_TZ = timezone(timedelta(hours=-3))
+BRT = BR_TZ  # alias usado pela detecção de surge
+
+# ─── SURGE DE F ──────────────────────────────────────────────────────────────
+_f_counts: Dict[str, Dict[str, int]] = {}         # {video_id: {minute_key: count}}
+_minute_tech: Dict[str, Dict[str, int]] = {}       # {video_id: {minute_key: count}}
+_f_surge_cooldown: Dict[str, float] = {}           # {video_id: epoch do último evento}
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
 os.makedirs("debug_logs", exist_ok=True)
@@ -410,6 +425,7 @@ def safe_get(url: str, params: Optional[dict] = None, timeout: int = SCRAPE_TIME
 
 _oembed_cache: Dict[str, tuple] = {}  # video_id -> (title, timestamp)
 OEMBED_TTL = 120.0  # re-busca título a cada 2 minutos
+_ownership_verified: dict = {}  # video_id -> author_url (cache de ownership por canal)
 
 def oembed_title(video_id: str) -> str:
     cached = _oembed_cache.get(video_id)
@@ -432,6 +448,47 @@ def oembed_title(video_id: str) -> str:
     if cached:
         return cached[0]
     return video_id
+
+
+def oembed_belongs_to_channel(video_id: str, handle: str, channel_id: str) -> bool:
+    """Verifica via oembed se o vídeo pertence ao canal (handle ou channel_id)."""
+    h = (handle or "").strip().lstrip("@").lower()
+    cid = (channel_id or "").strip().lower()
+
+    def _matches(author_url: str) -> bool:
+        if not author_url:
+            return False
+        if h and f"/@{h}" in author_url:
+            return True
+        if cid and cid in author_url:
+            return True
+        return False
+
+    cached = _ownership_verified.get(video_id)
+    if cached is not None:
+        return _matches(cached)
+    if time.time() < _rate_limited_until:
+        return False
+    try:
+        o = SESSION.get(
+            "https://www.youtube.com/oembed",
+            params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+            timeout=6,
+        )
+        if o.status_code == 200:
+            data = o.json()
+            author_url = (data.get("author_url") or "").lower()
+            t = data.get("title", video_id)
+            _oembed_cache[video_id] = (t, time.time())
+            _ownership_verified[video_id] = author_url
+            if _matches(author_url):
+                return True
+            _log_debug(f"[oembed_belongs] {video_id} pertence a {author_url}, não ao canal @{h}/{cid}")
+            return False
+    except Exception:
+        pass
+    return False
+
 
 # ─── LIVE DISCOVERY ──────────────────────────────────────────────────────────
 def resolve_channel_id_by_handle(handle: str) -> str:
@@ -562,6 +619,20 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
     if not isinstance(data, dict):
         return out
 
+    def _subtree_says_live(node) -> bool:
+        # YouTube serve /streams em duas variantes (videoRenderer ou lockupViewModel).
+        # Ambas marcam live com THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE no overlay do badge.
+        # Token discriminante: presente em todas as lives ativas, ausente em todos os VODs.
+        try:
+            blob = json.dumps(node, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            return False
+        return (
+            '"style":"LIVE"' in blob
+            or '"label":"LIVE"' in blob
+            or 'THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE' in blob
+        )
+
     def walk(obj):
         if isinstance(obj, dict):
             if "videoRenderer" in obj:
@@ -590,6 +661,14 @@ def _extract_live_video_ids_from_html(html: str) -> List[str]:
                         is_live = True
                 if is_live and vid not in out:
                     out.append(vid)
+            # Novo renderer (2026): YouTube migrou /streams para lockupViewModel
+            # — não há mais "videoRenderer" clássico nesta página.
+            if "lockupViewModel" in obj:
+                lvm = obj["lockupViewModel"]
+                vid = lvm.get("contentId")
+                if isinstance(vid, str) and len(vid) == 11 and _subtree_says_live(lvm):
+                    if vid not in out:
+                        out.append(vid)
             for v in obj.values():
                 walk(v)
         elif isinstance(obj, list):
@@ -762,10 +841,17 @@ def list_live_videos_any(handle: str, channel_id: str, max_results: int = LIVE_M
             except Exception as e:
                 _log_debug(f"[list_live_videos_any] RSS erro: {e}")
 
-        # Confirmação via /watch desativada para evitar 429 contínuo.
-        # Os IDs já vêm de páginas com badge/overlay LIVE e do endpoint /live.
-        lives_found: List[Tuple[str, str]] = []
+        # Filtro de ownership: descarta vídeos que não pertencem ao canal
+        # (YouTube mistura recomendações de outros canais na home/streams)
+        verified_ids = []
         for vid in collected_ids[:max_results]:
+            if oembed_belongs_to_channel(vid, h, cid):
+                verified_ids.append(vid)
+            else:
+                _log_debug(f"[list_live_videos_any] descartado (outro canal): {vid}")
+
+        lives_found: List[Tuple[str, str]] = []
+        for vid in verified_ids:
             lives_found.append((vid, _best_title(vid, "")))
 
         # D) Estratégia desativada: expandir IDs a partir da página /watch.
@@ -803,14 +889,14 @@ _local_adapter = requests.adapters.HTTPAdapter(
 _local_session.mount("http://", _local_adapter)
 _local_healthy = True
 _local_health_check_at = 0.0
-_LOCAL_HEALTH_RECHECK = 30.0
+_LOCAL_HEALTH_RECHECK = 90.0
 
 _KEYWORD_FALLBACK = [
     # (regex, category, issue, severity)
     (re.compile(r"\b(?:sem\s+(?:audio|áudio|som))\b", re.I),              "AUDIO", "sem_audio",        "high"),
-    (re.compile(r"\b(?:audio|áudio|som)\s+(?:estouran|estourad|chiand|ruim|ruído|horrivel|horrível|péssim|pessim|muito\s+alto|alto\s+demais|baixo|baixíssim|abafad|cortand)", re.I),
+    (re.compile(r"\b(?:audio|áudio|som)\s+(?:\S+\s+){0,3}(?:estouran|estourad|chiand|ruim|ruído|horrivel|horrível|péssim|pessim|muito\s+alto|alto\s+demais|baixo|baixíssim|abafad|cortand)", re.I),
                                                                             "AUDIO", "qualidade_audio",  "medium"),
-    (re.compile(r"\b(?:som|audio|áudio)\s+(?:ruim|horrivel|horrível|péssim|pessim)\b", re.I),
+    (re.compile(r"\b(?:som|audio|áudio)\s+(?:\S+\s+){0,3}(?:ruim|horrivel|horrível|péssim|pessim)\b", re.I),
                                                                             "AUDIO", "qualidade_audio",  "medium"),
     # Vazamento de áudio: outro canal / outro áudio entrando na transmissão
     (re.compile(
@@ -826,7 +912,7 @@ _KEYWORD_FALLBACK = [
         re.I),                                                              "AUDIO", "vazamento_audio",  "high"),
     (re.compile(r"\b(?:tela\s+preta|tela\s+escura|sem\s+(?:video|vídeo|imagem))\b", re.I),
                                                                             "VIDEO", "tela_preta",       "high"),
-    (re.compile(r"\b(?:travand|pixelan|imagem\s+ruim|imagem\s+borrad)", re.I),
+    (re.compile(r"\b(?:travand|pixelan|borrad|imagem\s+ruim|imagem\s+borrad)", re.I),
                                                                             "VIDEO", "qualidade_video",  "medium"),
     # "congelando" só como técnico se vier junto com contexto de tela/vídeo
     (re.compile(r"(?:tela|imagem|video|vídeo|transmiss)[^\n]{0,30}congel|congel[^\n]{0,30}(?:tela|imagem|video|vídeo|transmiss)", re.I),
@@ -834,8 +920,18 @@ _KEYWORD_FALLBACK = [
     (re.compile(r"\b(?:buffering|buffer|live\s+caiu|caiu\s+a\s+live|live\s+foi\s+de\b|erro\s+ao\s+abrir)\b", re.I),
                                                                             "REDE",  "conexao",          "high"),
     # Sinal: "sem sinal", "sinal caiu", "cade o sinal", "perderam o sinal", "sinal ruim/zoado", "F sinal"
-    (re.compile(r"\b(?:sem\s+sinal|sinal\s+(?:caiu|ruim|horrivel|horrível|péssim|pessim|cortou|sumiu|perdid|zoad)|(?:cadê|cade|perderam|perdeu)\s+(?:o\s+)?sinal|f\s+(?:pro?\s+)?sinal)\b", re.I),
+    (re.compile(r"\b(?:sem\s+sinal|sinal\s+(?:caiu|ruim|horrivel|horrível|péssim|pessim|cortou|sumiu|perdid|zoad)|(?:cadê|cade|kd)\s+(?:o\s+)?sinal|(?:perderam|perdeu)\s+(?:o\s+)?sinal|f\s+(?:pro?\s+)?sinal)\b", re.I),
                                                                             "REDE",  "sem_sinal",        "high"),
+    # "kd o som", "kd o audio", "kd a imagem" — cadê abreviado
+    (re.compile(r"\bkd\s+(?:o\s+|a\s+)?(?:som|audio|áudio|narr)", re.I),
+                                                                            "AUDIO", "sem_audio",        "high"),
+    (re.compile(r"\bkd\s+(?:o\s+|a\s+)?(?:video|vídeo|imagem|tela)", re.I),
+                                                                            "VIDEO", "tela_preta",       "high"),
+    # "cadê o som/audio" — padrão que faltava
+    (re.compile(r"\b(?:cadê|cade)\s+(?:o\s+|a\s+)?(?:som|audio|áudio)", re.I),
+                                                                            "AUDIO", "sem_audio",        "high"),
+    (re.compile(r"\b(?:cadê|cade)\s+(?:o\s+|a\s+)?(?:video|vídeo|imagem|tela)", re.I),
+                                                                            "VIDEO", "tela_preta",       "high"),
     # Delay com intensidade: "delay gigante", "delay de 20seg", "delay absurdo"
     # RISCO: "delay + adjetivo de jogador" (ex: "delay enorme do goleiro") — improvável em chat
     # NÃO matcha "delay do Bobadilha" (sem intensificador)
@@ -866,6 +962,12 @@ _KEYWORD_FALLBACK = [
     # RISCO: muito baixo — sempre referência a problema na transmissão
     (re.compile(r"(?:n[ãa]o|n)\s+(?:pagou?|paga)\s+(?:a\s+|o\s+)?(?:internet|wifi|wi-?fi|net\b)|pag(?:a|ue)\s+(?:a\s+)?(?:internet|wifi|wi-?fi)|pagou\s+(?:a\s+|o\s+)?(?:internet|wifi|wi-?fi|net\b)", re.I),
                                                                             "REDE",  "conexao",          "medium"),
+    # Bugou/bugando: só com contexto de stream — "bugou a live", "ta bugando a transmissão"
+    # SEM contexto ("bugou", "bugou ele") é gíria genérica — NÃO captura
+    (re.compile(r"\bbug(?:ou|and|ad)\s+(?:a\s+)?(?:live|transmiss|stream|tela|imagem|video|vídeo|som|audio|áudio)", re.I),
+                                                                            "REDE",  "conexao",          "medium"),
+    (re.compile(r"(?:live|transmiss|stream|tela|imagem|video|vídeo|som|audio|áudio)\s+(?:\S+\s+){0,2}bug(?:ou|and|ad)", re.I),
+                                                                            "REDE",  "conexao",          "medium"),
 ]
 
 def _keyword_override(text: str) -> Optional[dict]:
@@ -891,6 +993,8 @@ _TECH_KEYWORDS = re.compile(
     r"|\bmudo|\bmuta|\bdessincroni|\batraso|\badianta|\bdelay"   # sincronia
     r"|\bvazand|\bvazou\b|\bvazamento"                          # vazamento de áudio
     r"|\bf\s+(?:audio|áudio|som|sinal|internet|live|transmiss|stream)"  # "F áudio/sinal/live" (gíria)
+    r"|\bkd\s+(?:o\s+|a\s+)?(?:som|audio|áudio|video|vídeo|imagem|tela|sinal)"  # "kd o som" = cadê
+    r"|\b(?:cadê|cade)\s+(?:o\s+|a\s+)?(?:som|audio|áudio|video|vídeo|imagem|tela)"  # cadê o som
     r")",
     re.I,
 )
@@ -1021,6 +1125,7 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
             return
         queue.put({"type": "heartbeat", "channel": channel_display, "video_id": video_id,
                    "title": title, "url": f"https://www.youtube.com/watch?v={video_id}", "ts": now_iso()})
+        last_periodic_hb = time.time()
 
         while True:
             try:
@@ -1114,6 +1219,11 @@ def monitor_process_main(channel_display: str, video_id: str, title: str, queue:
                     msgs_read_in_window = 0
                     window_start = nowt
 
+                # Heartbeat periódico a cada 120s — atualiza título mesmo com chat ativo
+                if nowt - last_periodic_hb >= 120.0:
+                    queue.put({"type": "heartbeat", "channel": channel_display, "video_id": video_id, "ts": now_iso()})
+                    last_periodic_hb = nowt
+
                 if (nowt - last_item_ts) > CHAT_IDLE_RECREATE_SECONDS and (nowt - last_recreate_ts) > 5.0:
                     # Evita chamada extra no /watch (gera 429 e piora a varredura).
                     # Aqui só tentamos recriar o chat; o supervisor decide encerramento.
@@ -1154,6 +1264,14 @@ def _clean_yt_emojis(text: str) -> str:
     """Remove emoji codes custom do YouTube (:nome:) da mensagem.
     Emojis Unicode normais (😂❤️🔥) passam intactos."""
     return _YT_EMOJI_RE.sub("", text).strip()
+
+# ─── NORMALIZAÇÃO DE LETRAS REPETIDAS ────────────────────────────────────────
+_REPEATED_CHARS = re.compile(r"(.)\1{2,}")
+
+def _collapse_repeated(text: str) -> str:
+    """Colapsa letras repetidas 3+ para 2: audiooooo→audioo, travouuuu→travouu.
+    Preserva 'ss', 'rr', 'ee' etc (2 repetições) que podem ser válidas."""
+    return _REPEATED_CHARS.sub(r"\1\1", text)
 
 # ─── PRÉ-FILTRO RÁPIDO (descarta mensagens óbvias sem chamar IA) ─────────────
 _PREFILTER_SKIP = re.compile(
@@ -1230,14 +1348,82 @@ def _flush_pending_counts():
             _log_debug(f"[counter_flush] {vid}: {e}")
 
 
+def _prev_minute(minute_key: str) -> str:
+    """Retorna o minuto anterior a YYYY-MM-DDTHH:MM."""
+    try:
+        dt = datetime.strptime(minute_key, "%Y-%m-%dT%H:%M")
+        prev = dt - timedelta(minutes=1)
+        return prev.strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+        return ""
+
+
+def _create_f_surge_event(vid: str, minute_key: str, f_count: int, viewers: int):
+    """Cria evento sintético de surge de F no Firestore."""
+    try:
+        fs = _get_fs()
+        if not fs:
+            return
+        doc_id = f"f_surge_{minute_key}"
+        ts_iso = minute_key + ":30.000-03:00"  # meio do minuto, BRT
+
+        doc_ref = fs.collection("lives").document(vid).collection("comments").document(doc_id)
+        doc_ref.set({
+            "author":    "CRIA",
+            "text":      f"Surge de F detectado: {f_count} mensagens em 1 minuto",
+            "ts":        ts_iso,
+            "is_technical": True,
+            "category":  "REDE/PLATAFORMA",
+            "issue":     "SURGE DE F",
+            "severity":  "medium",
+            "dismissed":  False,
+            "synthetic":  True,
+        })
+        _accum_counter(vid, is_tech=True, category="REDE/PLATAFORMA", issue="SURGE DE F")
+        _log_debug(f"[f_surge] {vid} — {f_count} F's no minuto {minute_key} (viewers={viewers})")
+    except Exception as e:
+        _log_debug(f"[f_surge] erro ao criar evento: {e}")
+
+
+def _check_f_surges():
+    """Verifica surges de F para todas as lives ativas."""
+    now = time.time()
+    # Itera sobre cópia das chaves para evitar mutação durante iteração
+    for vid in list(_f_counts.keys()):
+        # Cooldown ativo?
+        if vid in _f_surge_cooldown and now - _f_surge_cooldown[vid] < F_COOLDOWN_SECS:
+            continue
+
+        viewers = _viewer_cache.get(vid) or 0
+        threshold = max(30, int(viewers * 0.0002))
+
+        current_min = datetime.now(BRT).strftime("%Y-%m-%dT%H:%M")
+        prev_min = _prev_minute(current_min)
+
+        for minute_key in [current_min, prev_min]:
+            if not minute_key:
+                continue
+            f_count = _f_counts.get(vid, {}).get(minute_key, 0)
+            tech_count = _minute_tech.get(vid, {}).get(minute_key, 0)
+
+            if f_count >= threshold and tech_count >= 2:
+                _create_f_surge_event(vid, minute_key, f_count, viewers)
+                _f_surge_cooldown[vid] = now
+                break
+
+
 def _counter_flush_loop():
-    """Thread daemon: flush periódico de contadores."""
+    """Thread daemon: flush periódico de contadores + detecção de surge de F."""
     while True:
         time.sleep(FS_FLUSH_SECS)
         try:
             _flush_pending_counts()
         except Exception as e:
             _log_debug(f"[counter_flush_loop] {e}")
+        try:
+            _check_f_surges()
+        except Exception as e:
+            _log_debug(f"[counter_flush_loop] f_surge: {e}")
 
 
 def _get_serving_endpoint(vid: str):
@@ -1286,23 +1472,37 @@ def _process_batch(items: list):
             r.raise_for_status()
             raw_results = r.json()
         except Exception as e:
-            _log_debug(f"[batch_classify] {url} erro: {e}")
-            if url == LOCAL_SERVING_URL:
-                global _local_healthy, _local_health_check_at
-                _local_healthy = False
-                _local_health_check_at = time.time()
-                _log_debug("[routing] CPU local unhealthy → tentando GPU")
-                try:
-                    r = _cloud_session.post(
-                        f"{SERVING_URL}/classify/batch",
-                        json={"texts": texts}, timeout=SERVING_TIMEOUT,
-                    )
-                    r.raise_for_status()
-                    raw_results = r.json()
-                except Exception as e2:
-                    _log_debug(f"[batch_classify] GPU fallback falhou: {e2}")
+            _log_debug(f"[batch_classify] {url} erro (tentativa 1): {e}")
+            # Retry simples — 1 tentativa com 0.5s backoff
+            time.sleep(0.5)
+            try:
+                r = session.post(f"{url}/classify/batch", json={"texts": texts}, timeout=timeout)
+                r.raise_for_status()
+                raw_results = r.json()
+                _log_debug(f"[batch_classify] {url} retry OK")
+            except Exception as e_retry:
+                _log_debug(f"[batch_classify] {url} erro (tentativa 2): {e_retry}")
+                if url == LOCAL_SERVING_URL:
+                    global _local_healthy, _local_health_check_at
+                    _local_healthy = False
+                    _local_health_check_at = time.time()
+                    _log_debug("[routing] CPU local unhealthy → tentando GPU")
+                    try:
+                        r = _cloud_session.post(
+                            f"{SERVING_URL}/classify/batch",
+                            json={"texts": texts}, timeout=SERVING_TIMEOUT,
+                        )
+                        r.raise_for_status()
+                        raw_results = r.json()
+                    except Exception as e2:
+                        _log_debug(f"[batch_classify] GPU fallback falhou: {e2}")
         for i, it in enumerate(group):
             ai_result_map[it["comment_id"]] = raw_results[i] if i < len(raw_results) else None
+
+    # Log quando batch perde resultados da API
+    api_miss = sum(1 for it in ai_items if ai_result_map.get(it["comment_id"]) is None)
+    if api_miss > 0:
+        _log_debug(f"[batch] AVISO: {api_miss}/{len(ai_items)} itens sem resultado da API")
 
     # Firestore WriteBatch — salva comment docs + minutes de uma vez
     fs = _get_fs()
@@ -1326,31 +1526,51 @@ def _process_batch(items: list):
         res = ai_result_map.get(it["comment_id"]) if it["needs_ai"] else None
         is_tech = False
         category, issue, severity = None, None, "none"
+        confidence = 0.0
 
-        if res:
+        if not it["needs_ai"]:
+            classification_method = "prefilter_skip"
+        elif res is None:
+            classification_method = "api_failed"
+        else:
             is_tech    = bool(res.get("is_technical", False))
             confidence = float(res.get("confidence", 1.0))
             cat_raw    = res.get("category")
+            classification_method = "model"
             if is_tech and confidence < CLOUD_CONFIDENCE_THRESHOLD:
                 is_tech = False
-            if is_tech and (cat_raw is None or cat_raw == "OUTRO"):
+                classification_method = "confidence_threshold"
+            elif is_tech and (cat_raw is None or cat_raw == "OUTRO"):
                 is_tech = False
-            if is_tech and not _has_tech_keyword(it["text"]):
+                classification_method = "no_category"
+            elif is_tech and not _has_tech_keyword(it["text"]):
                 is_tech = False
+                classification_method = "no_keyword"
             if is_tech:
                 category = cat_raw
                 issue    = res.get("issue")
                 sev_raw  = (res.get("severity") or "none").lower()
                 severity = sev_raw if sev_raw in ("none", "low", "medium", "high") else "none"
-            if not is_tech:
-                override = _keyword_override(it["text"])
-                if override:
-                    is_tech  = True
-                    category = override["category"]
-                    issue    = override["issue"]
-                    severity = override["severity"]
+
+        # keyword_override roda quando: modelo disse não-técnico OU API falhou (res=None)
+        if not is_tech and it["needs_ai"]:
+            override = _keyword_override(it["text"])
+            if override:
+                is_tech  = True
+                category = override["category"]
+                issue    = override["issue"]
+                severity = override["severity"]
+                classification_method = "keyword_override"
 
         _accum_counter(it["vid"], is_tech, category, issue)
+
+        # Rastreia técnicos por minuto (para correlação do surge de F)
+        if is_tech:
+            ts_val_m = it["ts"]
+            mk = ts_val_m[:16] if len(ts_val_m) >= 16 else ""
+            if mk and len(mk) == 16:
+                _minute_tech.setdefault(it["vid"], {}).setdefault(mk, 0)
+                _minute_tech[it["vid"]][mk] += 1
 
         live_ref = fs.collection("lives").document(it["vid"])
 
@@ -1365,6 +1585,9 @@ def _process_batch(items: list):
                 "category":     category if is_tech else None,
                 "issue":        issue    if is_tech else None,
                 "severity":     severity if is_tech else "none",
+                "model_confidence":      confidence,
+                "classification_method": classification_method,
+                "model_version":         MODEL_VERSION,
             }
         )
         batch_ops += 1
@@ -1381,6 +1604,10 @@ def _process_batch(items: list):
             _vc = _viewer_cache.get(it["vid"])
             if _vc is not None:
                 _min_data["viewers"] = _vc
+            # f_count informativo no doc de minuto (para health score no dashboard)
+            f_cnt = _f_counts.get(it["vid"], {}).get(minute_key, 0)
+            if f_cnt > 0:
+                _min_data["f_count"] = f_cnt
             batch.set(
                 live_ref.collection("minutes").document(minute_key),
                 _min_data,
@@ -1432,6 +1659,14 @@ def _process_chat_item(vid: str, author: str, text: str, ts: str):
         text = _clean_yt_emojis(text)
         if not text:
             return
+        text = _collapse_repeated(text)
+
+        # Contagem de "F" — ANTES do pré-filtro descartar mensagens curtas
+        if text.strip() in ("F", "f"):
+            minute_key = ts[:16] if len(ts) >= 16 else ""
+            if minute_key and len(minute_key) == 16:
+                _f_counts.setdefault(vid, {}).setdefault(minute_key, 0)
+                _f_counts[vid][minute_key] += 1
 
         comment_id = hashlib.sha1(
             f"{author}{ts}{text}".encode("utf-8", errors="ignore")
@@ -1519,7 +1754,12 @@ def queue_consumer_loop(q: Queue):
                 _process_chat_item(vid, author, text, ts)
 
             elif t == "ended":
-                fs_mark_live_ended(item["video_id"])
+                ended_vid = item["video_id"]
+                fs_mark_live_ended(ended_vid)
+                # Limpa estado de surge de F
+                _f_counts.pop(ended_vid, None)
+                _minute_tech.pop(ended_vid, None)
+                _f_surge_cooldown.pop(ended_vid, None)
 
         except Exception:
             _log_debug(f"queue_consumer error: {traceback.format_exc()}")
@@ -1632,8 +1872,22 @@ def channel_supervisor_loop(channel_display: str, name: str, handle: str,
                     except Exception:
                         still_live = True  # dúvida: preservar e deixar miss_tolerance decidir
                     if still_live:
-                        lives.append((vid, _best_title(vid, "")))
-                        _log_debug(f"[{channel_display}] live mantida (invisível no canal): {vid}")
+                        # Só descarta se cache JÁ TEM evidência de canal diferente.
+                        # Em qualquer outra situação (cache vazio, rate-limited), preserva
+                        # como antes — preserva o comportamento histórico do fluxo invisível.
+                        cached_author = _ownership_verified.get(vid)
+                        h_low = (handle or "").lstrip("@").lower()
+                        cid_low = (channel_id or "").lower()
+                        is_other = (
+                            cached_author
+                            and not (h_low and f"/@{h_low}" in cached_author)
+                            and not (cid_low and cid_low in cached_author)
+                        )
+                        if is_other:
+                            _log_debug(f"[{channel_display}] live descartada (cache: pertence a {cached_author}): {vid}")
+                        else:
+                            lives.append((vid, _best_title(vid, "")))
+                            _log_debug(f"[{channel_display}] live mantida (invisível no canal): {vid}")
                     else:
                         _log_debug(f"[{channel_display}] live descartada (InnerTube: encerrada): {vid}")
 
